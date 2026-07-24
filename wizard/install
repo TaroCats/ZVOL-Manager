@@ -1,0 +1,19 @@
+[
+  {
+    "stepTitle": "Web 服务端口",
+    "items": [
+      {
+        "type": "text",
+        "field": "WEB_PORT",
+        "label": "Web 管理界面端口",
+        "initValue": "8765",
+        "rules": [
+          {
+            "pattern": "^[0-9]+$",
+            "message": "端口号必须为数字"
+          }
+        ]
+      }
+    ]
+  }
+]

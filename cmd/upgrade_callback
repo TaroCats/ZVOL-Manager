@@ -1,0 +1,6 @@
+#!/bin/bash
+PACKAGE_BASE="${TRIM_APPDEST}"
+if [ -f "${PACKAGE_BASE}/requirements.txt" ]; then
+  pip3 install -r "${PACKAGE_BASE}/requirements.txt" 2>/dev/null || pip install -r "${PACKAGE_BASE}/requirements.txt" 2>/dev/null
+fi
+exit 0

@@ -1,0 +1,74 @@
+#!/bin/bash
+# ============================================================
+# ZVOL Manager — 安装后配置回调
+# 在文件解压后、app/ 目录平铺到 TRIM_APPDEST 之后执行
+# 此时 install_dep_apps 声明的 python312 运行时已就绪
+# ============================================================
+
+RUNTIME_PYTHON=/var/apps/python312/target/bin/python3
+RUNTIME_PIP=/var/apps/python312/target/bin/pip3
+APP_BASE="${TRIM_APPDEST}"
+
+echo "ZVOL Manager v1.2.0 安装配置" > "${TRIM_TEMP_LOGFILE}"
+echo "=============================================" >> "${TRIM_TEMP_LOGFILE}"
+
+# 1. 检查 Python 运行时是否就绪
+if [ ! -x "${RUNTIME_PYTHON}" ]; then
+    echo "错误：Python312 运行时未安装，请检查 manifest 中 install_dep_apps=python312 声明。" >> "${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+echo "Python 运行时: $(${RUNTIME_PYTHON} --version)" >> "${TRIM_TEMP_LOGFILE}"
+
+# 2. 创建虚拟环境
+echo "创建 Python 虚拟环境..." >> "${TRIM_TEMP_LOGFILE}"
+cd "${APP_BASE}" || { echo "错误：无法进入 ${APP_BASE}" >> "${TRIM_TEMP_LOGFILE}"; exit 1; }
+
+export PATH=/var/apps/python312/target/bin:$PATH
+python3 -m venv .venv 2>> "${TRIM_TEMP_LOGFILE}"
+if [ $? -ne 0 ]; then
+    echo "错误：创建虚拟环境失败" >> "${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+source .venv/bin/activate
+
+# 3. 安装/升级 pip
+echo "升级 pip..." >> "${TRIM_TEMP_LOGFILE}"
+pip install --upgrade pip 2>> "${TRIM_TEMP_LOGFILE}"
+
+# 4. 安装 Python 依赖
+echo "安装 Python 依赖..." >> "${TRIM_TEMP_LOGFILE}"
+if [ -f requirements.txt ]; then
+    pip install -r requirements.txt 2>> "${TRIM_TEMP_LOGFILE}"
+    PIP_EXIT=$?
+else
+    echo "警告：未找到 requirements.txt，将安装基础依赖" >> "${TRIM_TEMP_LOGFILE}"
+    pip install fastapi uvicorn 2>> "${TRIM_TEMP_LOGFILE}"
+    PIP_EXIT=$?
+fi
+
+if [ ${PIP_EXIT} -ne 0 ]; then
+    echo "错误：pip 安装依赖失败，请查看上方日志" >> "${TRIM_TEMP_LOGFILE}"
+    deactivate
+    exit 1
+fi
+
+# 5. 验证关键模块可导入
+echo "验证关键模块..." >> "${TRIM_TEMP_LOGFILE}"
+for mod in fastapi uvicorn; do
+    python3 -c "import ${mod}" 2>&1
+    if [ $? -ne 0 ]; then
+        echo "错误：模块 ${mod} 导入失败" >> "${TRIM_TEMP_LOGFILE}"
+        deactivate
+        exit 1
+    fi
+    echo "  ✓ ${mod}" >> "${TRIM_TEMP_LOGFILE}"
+done
+
+deactivate
+
+echo "=============================================" >> "${TRIM_TEMP_LOGFILE}"
+echo "安装配置完成 ✓" >> "${TRIM_TEMP_LOGFILE}"
+
+exit 0

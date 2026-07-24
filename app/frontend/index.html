@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZFS ZVOL Manager</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+    #app {
+      display: flex;
+      min-height: 100vh;
+    }
+    /* ----- Sidebar ----- */
+    .sidebar {
+      width: 220px;
+      background: #0f0f1a;
+      padding: 20px 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #2a2a4a;
+      flex-shrink: 0;
+    }
+    .sidebar .logo {
+      font-size: 18px;
+      font-weight: 700;
+      padding: 0 20px 24px;
+      color: #e94560;
+      letter-spacing: 1px;
+    }
+    .sidebar .logo span { color: #e0e0e0; }
+    .sidebar nav a {
+      display: block;
+      padding: 12px 20px;
+      color: #a0a0c0;
+      text-decoration: none;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+      border-left: 3px solid transparent;
+    }
+    .sidebar nav a:hover,
+    .sidebar nav a.active {
+      background: rgba(233,69,96,0.12);
+      color: #e94560;
+      border-left-color: #e94560;
+    }
+    .sidebar .version {
+      margin-top: auto;
+      padding: 20px;
+      font-size: 11px;
+      color: #555;
+    }
+    /* ----- Main ----- */
+    .main {
+      flex: 1;
+      padding: 24px 32px;
+      overflow-y: auto;
+    }
+    .header {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 24px;
+      color: #fff;
+    }
+    /* ----- Cards ----- */
+    .card {
+      background: #16213e;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      border: 1px solid #2a2a4a;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #fff;
+    }
+    /* ----- Table ----- */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    th {
+      color: #888;
+      font-weight: 500;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    tr:hover td { background: rgba(233,69,96,0.04); }
+    /* ----- Buttons ----- */
+    .btn {
+      display: inline-block;
+      padding: 7px 14px;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin: 2px;
+      color: #fff;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: #e94560; }
+    .btn-primary:hover:not(:disabled) { background: #d13658; }
+    .btn-secondary { background: #0f3460; }
+    .btn-secondary:hover:not(:disabled) { background: #1a4a80; }
+    .btn-success { background: #0e9c6e; }
+    .btn-success:hover:not(:disabled) { background: #0cb87c; }
+    .btn-danger { background: #c0392b; }
+    .btn-danger:hover:not(:disabled) { background: #e74c3c; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    /* ----- Forms ----- */
+    .form-group {
+      margin-bottom: 14px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      max-width: 360px;
+      padding: 8px 10px;
+      background: #0f0f1a;
+      border: 1px solid #2a2a4a;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 13px;
+    }
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #e94560;
+    }
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+    .checkbox-group input[type="checkbox"] {
+      accent-color: #e94560;
+    }
+    /* ----- Modal ----- */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: #16213e;
+      border-radius: 10px;
+      padding: 24px;
+      width: 90%;
+      max-width: 560px;
+      max-height: 80vh;
+      overflow-y: auto;
+      border: 1px solid #2a2a4a;
+    }
+    .modal h3 {
+      margin-bottom: 16px;
+      font-size: 17px;
+      color: #fff;
+    }
+    .modal .actions {
+      margin-top: 18px;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    /* ----- Tags / Badges ----- */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-yes { background: #0e9c6e22; color: #0e9c6e; }
+    .badge-no  { background: #e9456022; color: #e94560; }
+    /* ----- Toast ----- */
+    .toast {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      padding: 12px 20px;
+      border-radius: 6px;
+      font-size: 13px;
+      z-index: 2000;
+      animation: slideIn 0.3s;
+    }
+    .toast-success { background: #0e9c6e; color: #fff; }
+    .toast-error { background: #c0392b; color: #fff; }
+    @keyframes slideIn {
+      from { transform: translateX(100px); opacity: 0; }
+      to   { transform: translateX(0); opacity: 1; }
+    }
+    .loading { text-align: center; padding: 40px; color: #888; }
+.switch { position:relative; display:inline-block; width:40px; height:22px; }
+.switch input { opacity:0; width:0; height:0; }
+.slider { position:absolute; cursor:pointer; top:0;left:0;right:0;bottom:0; background:#444; border-radius:22px; transition:.3s; }
+.slider:before { position:absolute; content:""; height:16px;width:16px; left:3px;bottom:3px; background:#fff; border-radius:50%; transition:.3s; }
+input:checked+.slider { background:#e94560; }
+input:checked+.slider:before { transform:translateX(18px); }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">ZFS <span>ZVOL</span></div>
+    <nav>
+      <a :class="{active: page==='list'}" @click="page='list'">ZVOL 列表</a>
+      <a :class="{active: page==='create'}" @click="page='create'">创建 ZVOL</a>
+      <a :class="{active: page==='iscsi'}" @click="page='iscsi'">iSCSI 管理</a>
+    </nav>
+    <div class="version">v1.1.0</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <!-- Toast -->
+    <transition name="slide">
+      <div v-if="toast" :class="'toast toast-' + toast.type">{{ toast.msg }}</div>
+    </transition>
+
+    <!-- ============ ZVOL LIST PAGE ============ -->
+    <section v-if="page==='list'">
+      <div class="header">ZVOL 列表</div>
+      <div v-if="loading" class="loading">加载中...</div>
+      <div v-else-if="zvols.length===0" class="card" style="text-align:center;color:#888;">
+        暂无 ZVOL。请先创建。
+      </div>
+      <div v-else class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>大小</th>
+              <th>已用</th>
+              <th>引用</th>
+              <th>Block Size</th>
+              <th>压缩比</th>
+              <th>已挂载</th>
+              <th>iSCSI</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="z in zvols" :key="z.name">
+              <td><strong>{{ z.name }}</strong></td>
+              <td>{{ z.volsize }}</td>
+              <td>{{ z.used }}</td>
+              <td>{{ z.refer }}</td>
+              <td>{{ z.volblocksize }}</td>
+              <td>{{ z.compressratio }}</td>
+              <td><span :class="'badge badge-' + (z.mounted==='yes' ? 'yes':'no')">{{ z.mounted==='yes'?'是':'否' }}</span></td>
+              <td>
+                <span v-if="iscsiTargets[z.name]" class="badge badge-yes" style="cursor:pointer" @click="showIscsiDetail(z)" :title="iscsiTargets[z.name].iqn">已导出</span>
+                <button v-else class="btn btn-success btn-sm" @click="showIscsiCreateModal(z)">导出</button>
+              </td>
+              <td style="white-space:nowrap;">
+                <button v-if="z.mounted==='yes'" class="btn btn-secondary btn-sm" @click="unmountZvol(z)">卸载</button>
+                <button v-else class="btn btn-success btn-sm" @click="showMountModal(z)">挂载</button>
+                <button class="btn btn-secondary btn-sm" @click="showSnapshotModal(z)">快照</button>
+                <button class="btn btn-secondary btn-sm" @click="showCloneModal(z)">克隆</button>
+                <button class="btn btn-danger btn-sm" @click="confirmDeleteZvol(z)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ CREATE ZVOL PAGE ============ -->
+    <section v-if="page==='create'">
+      <div class="header">创建 ZVOL</div>
+      <div class="card">
+        <div class="form-group">
+          <label>存储池</label>
+          <select v-model="createForm.pool">
+            <option value="">-- 选择存储池 --</option>
+            <option v-for="p in pools" :key="p" :value="p">{{ p }}</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>ZVOL 名称</label>
+          <input v-model="createForm.name" placeholder="例如: data-zvol" />
+        </div>
+        <div class="form-group">
+          <label>大小</label>
+          <input v-model="createForm.size" placeholder="例如: 10G, 500M" />
+        </div>
+        <div class="form-group">
+          <label>Vol Block Size</label>
+          <select v-model="createForm.volblocksize">
+            <option value="8K">8K</option>
+            <option value="16K">16K</option>
+            <option value="32K">32K</option>
+            <option value="64K">64K</option>
+            <option value="128K">128K</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>压缩算法</label>
+          <select v-model="createForm.compression">
+            <option value="lz4">lz4 (推荐)</option>
+            <option value="zstd">zstd</option>
+            <option value="gzip">gzip</option>
+            <option value="off">off</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="sparse" v-model="createForm.sparse" />
+            <label for="sparse" style="margin-bottom:0;">稀疏卷 (Sparse)</label>
+          </div>
+        </div>
+        <button class="btn btn-primary" @click="createZvol" :disabled="creating">
+          {{ creating ? '创建中...' : '创建 ZVOL' }}
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ MOUNT MODAL ============ -->
+    <div v-if="mountModal" class="modal-overlay" @click.self="mountModal=null">
+      <div class="modal">
+        <h3>挂载 ZVOL: {{ mountModal.name }}</h3>
+        <div class="form-group">
+          <label>挂载点路径</label>
+          <input v-model="mountPoint" placeholder="/mnt/my-zvol" />
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary" @click="mountModal=null">取消</button>
+          <button class="btn btn-primary" @click="mountZvol">挂载</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ SNAPSHOT MODAL ============ -->
+    <div v-if="snapModal" class="modal-overlay" @click.self="snapModal=null">
+      <div class="modal">
+        <h3>快照管理: {{ snapModal.name }}</h3>
+        <!-- create -->
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+          <input v-model="newSnapName" placeholder="快照名 (如 snap-20260101)" style="flex:1;min-width:180px;padding:8px 10px;background:#0f0f1a;border:1px solid #2a2a4a;border-radius:4px;color:#e0e0e0;" />
+          <button class="btn btn-primary" @click="createSnapshot">创建</button>
+        </div>
+        <!-- list -->
+        <table v-if="snapshots.length>0">
+          <thead><tr><th>快照</th><th>创建时间</th><th>已用</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="s in snapshots" :key="s.name">
+              <td>{{ s.short_name }}</td>
+              <td>{{ s.creation }}</td>
+              <td>{{ s.used }}</td>
+              <td>
+                <button class="btn btn-secondary btn-sm" @click="confirmRollback(s)">回滚</button>
+                <button class="btn btn-danger btn-sm" @click="confirmDeleteSnap(s)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else style="color:#888;text-align:center;padding:20px;">暂无快照</div>
+        <div class="actions">
+          <button class="btn btn-secondary" @click="snapModal=null">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ CLONE MODAL ============ -->
+    <div v-if="cloneModal" class="modal-overlay" @click.self="cloneModal=null">
+      <div class="modal">
+        <h3>克隆 ZVOL: {{ cloneModal.name }}</h3>
+        <div class="form-group">
+          <label>源快照</label>
+          <select v-model="cloneForm.snapshot">
+            <option value="">-- 选择快照 --</option>
+            <option v-for="s in cloneSnapshots" :key="s.name" :value="s.short_name">{{ s.short_name }}</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>克隆名称</label>
+          <input v-model="cloneForm.clone_name" placeholder="clone-data" />
+        </div>
+        <div class="form-group">
+          <label>目标存储池</label>
+          <select v-model="cloneForm.target_pool">
+            <option value="">-- 选择池 --</option>
+            <option v-for="p in pools" :key="p" :value="p">{{ p }}</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary" @click="cloneModal=null">取消</button>
+          <button class="btn btn-primary" @click="cloneZvol">克隆</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ ISCSI MANAGEMENT PAGE ============ -->
+    <section v-if="page==='iscsi'">
+      <div class="header">iSCSI 目标管理</div>
+      <div v-if="iscsiLoading" class="loading">加载中...</div>
+      <div v-else-if="iscsiList.length===0" class="card" style="text-align:center;color:#888;">
+        暂无 iSCSI 目标。请在 ZVOL 列表中为 ZVOL 启用 iSCSI 导出。
+      </div>
+      <div v-else v-for="t in iscsiList" :key="t.iqn" class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#e94560;margin-bottom:8px;">{{ t.iqn }}</div>
+            <div style="font-size:13px;margin-bottom:4px;">
+              关联 ZVOL: <strong>{{ t.zvol }}</strong>
+            </div>
+            <div style="font-size:13px;margin-bottom:4px;">
+              门户地址: <code style="background:#0f0f1a;padding:2px 6px;border-radius:3px;">{{ t.portal }}</code>
+            </div>
+            <div style="font-size:13px;">
+              ACL 限制:
+              <span v-if="t.acls.length===0" style="color:#888;">无限制（允许任意 initiator）</span>
+              <span v-else v-for="a in t.acls" style="margin-left:6px;">{{ a }}</span>
+            </div>
+            <div style="font-size:13px;">
+              CHAP 认证:
+              <span v-if="t.chap_enabled" style="color:#4caf50;">已启用</span>
+              <span v-else style="color:#888;">未启用</span>
+            </div>
+          </div>
+          <div>
+            <button class="btn btn-secondary btn-sm" @click="showIscsiSettings(t)">设置</button>
+            <button class="btn btn-danger btn-sm" @click="confirmDeleteIscsi(t)">删除</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ISCSI CREATE MODAL ============ -->
+    <div v-if="iscsiCreateModal" class="modal-overlay" @click.self="iscsiCreateModal=null">
+      <div class="modal">
+        <h3>导出 iSCSI — {{ iscsiCreateModal.name }}</h3>
+        <p style="color:#888;font-size:13px;margin-bottom:12px;">
+          设备路径: /dev/zvol/{{ iscsiCreateModal.name }}
+        </p>
+        <div class="form-group">
+          <label>Initiator 限制 (ACL，可选)</label>
+          <input v-model="iscsiIqn" placeholder="例如: iqn.2025-01.com.client:initiator1" />
+          <div style="color:#666;font-size:11px;margin-top:4px;">留空则允许任意 initiator 连接</div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary" @click="iscsiCreateModal=null">取消</button>
+          <button class="btn btn-primary" @click="createIscsiTarget">创建 iSCSI 目标</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ ISCSI DETAIL MODAL ============ -->
+    <div v-if="iscsiDetailModal" class="modal-overlay" @click.self="iscsiDetailModal=null">
+      <div class="modal">
+        <h3>iSCSI 详情 — {{ iscsiDetailModel.zvol }}</h3>
+        <div style="font-size:13px;line-height:2;">
+          <div><strong>IQN:</strong> <code style="background:#0f0f1a;padding:2px 6px;border-radius:3px;">{{ iscsiDetailModel.iqn }}</code></div>
+          <div><strong>门户:</strong> {{ iscsiDetailModel.portal }}</div>
+          <div><strong>设备路径:</strong> /dev/zvol/{{ iscsiDetailModel.zvol }}</div>
+          <div><strong>ACL 限制:</strong>
+            <span v-if="iscsiDetailModel.acls.length===0" style="color:#888;">无限制</span>
+            <span v-else v-for="a in iscsiDetailModel.acls" style="margin-left:4px;">{{ a }}</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-danger" @click="confirmDeleteIscsi(iscsiDetailModel); iscsiDetailModal=null">删除目标</button>
+          <button class="btn btn-secondary" @click="iscsiDetailModal=null">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ ISCSI SETTINGS MODAL ============ -->
+    <div v-if="iscsiSettingsModal" class="modal-overlay" @click.self="iscsiSettingsModal=null">
+      <div class="modal" style="max-width:520px;">
+        <h3>iSCSI 设置 — {{ iscsiSettingsModel.zvol }}</h3>
+        <p style="color:#888;font-size:12px;margin-bottom:16px;">IQN: {{ iscsiSettingsModel.iqn }}</p>
+
+        <!-- Portal 设置 -->
+        <div class="form-group">
+          <label>监听 IP</label>
+          <input v-model="iscsiSettings.portal_ip" placeholder="0.0.0.0（所有网卡）" />
+        </div>
+        <div class="form-group">
+          <label>监听端口</label>
+          <input v-model="iscsiSettings.portal_port" type="number" placeholder="3260" />
+        </div>
+
+        <hr style="border-color:#333;margin:16px 0;" />
+
+        <!-- CHAP 认证 -->
+        <div class="form-group">
+          <label style="display:flex;align-items:center;justify-content:space-between;">
+            <span>CHAP 认证（单向）</span>
+            <label class="switch">
+              <input type="checkbox" v-model="iscsiSettings.chap_enabled" />
+              <span class="slider"></span>
+            </label>
+          </label>
+        </div>
+        <div v-if="iscsiSettings.chap_enabled">
+          <div class="form-group">
+            <label>CHAP 用户名</label>
+            <input v-model="iscsiSettings.chap_userid" placeholder="例如: initiator1" />
+          </div>
+          <div class="form-group">
+            <label>CHAP 密码</label>
+            <input v-model="iscsiSettings.chap_password" type="password" placeholder="12-16 位字符" />
+          </div>
+        </div>
+
+        <!-- Mutual CHAP -->
+        <div class="form-group" style="margin-top:8px;">
+          <label style="display:flex;align-items:center;justify-content:space-between;">
+            <span>双向 CHAP（Mutual）</span>
+            <label class="switch">
+              <input type="checkbox" v-model="iscsiSettings.mutual_enabled" />
+              <span class="slider"></span>
+            </label>
+          </label>
+          <div style="color:#666;font-size:11px;">Target 端主动认证 Initiator，比单向更安全</div>
+        </div>
+        <div v-if="iscsiSettings.mutual_enabled">
+          <div class="form-group">
+            <label>Mutual CHAP 用户名</label>
+            <input v-model="iscsiSettings.mutual_userid" placeholder="例如: target1" />
+          </div>
+          <div class="form-group">
+            <label>Mutual CHAP 密码</label>
+            <input v-model="iscsiSettings.mutual_password" type="password" placeholder="12-16 位字符" />
+          </div>
+        </div>
+
+        <div class="actions" style="margin-top:20px;">
+          <button class="btn btn-secondary" @click="iscsiSettingsModal=null">取消</button>
+          <button class="btn btn-primary" @click="saveIscsiSettings">保存设置</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ CONFIRM MODAL ============ -->
+    <div v-if="confirmModal" class="modal-overlay" @click.self="confirmModal=null">
+      <div class="modal" style="text-align:center;">
+        <h3>{{ confirmModal.title }}</h3>
+        <p style="color:#e94560;margin-bottom:16px;font-size:14px;">{{ confirmModal.msg }}</p>
+        <div class="actions" style="justify-content:center;">
+          <button class="btn btn-secondary" @click="confirmModal=null">取消</button>
+          <button class="btn btn-danger" @click="confirmModal.cb()">确认</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, nextTick } = Vue;
+
+createApp({
+  setup() {
+    const apiBase = '/api';
+    const page = ref('list');
+    const loading = ref(false);
+    const creating = ref(false);
+    const toast = ref(null);
+
+    // ---------- data ----------
+    const pools = ref([]);
+    const zvols = ref([]);
+
+    // create form
+    const createForm = reactive({
+      pool: '', name: '', size: '10G',
+      volblocksize: '16K', compression: 'lz4', sparse: true
+    });
+
+    // mount modal
+    const mountModal = ref(null);
+    const mountPoint = ref('');
+
+    // snapshot modal
+    const snapModal = ref(null);
+    const snapshots = ref([]);
+    const newSnapName = ref('');
+
+    // clone modal
+    const cloneModal = ref(null);
+    const cloneSnapshots = ref([]);
+    const cloneForm = reactive({ snapshot: '', clone_name: '', target_pool: '' });
+
+    // confirm modal
+    const confirmModal = ref(null);
+
+    // iscsi
+    const iscsiList = ref([]);
+    const iscsiLoading = ref(false);
+    const iscsiTargets = ref({});         // { zvol_name -> target_info }
+    const iscsiCreateModal = ref(null);    // { name } — the zvol to export
+    const iscsiDetailModal = ref(null);    // { iqn, zvol, portal, acls }
+    const iscsiDetailModel = ref({ iqn: '', zvol: '', portal: '', acls: [] });
+    const iscsiIqn = ref('');              // initiator IQN for ACL
+
+    // ---------- toast ----------
+    function showToast(type, msg) {
+      toast.value = { type, msg };
+      setTimeout(() => toast.value = null, 3000);
+    }
+
+    // ---------- api wrappers ----------
+    async function apiGet(path) {
+      const res = await fetch(apiBase + path);
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || res.statusText);
+      }
+      return res.json();
+    }
+    async function apiPost(path, body) {
+      const res = await fetch(apiBase + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || res.statusText);
+      }
+      return res.json();
+    }
+    async function apiDelete(path) {
+      const res = await fetch(apiBase + path, { method: 'DELETE' });
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || res.statusText);
+      }
+      return res.json();
+    }
+
+    // ---------- load ----------
+    async function loadPools() {
+      try {
+        const data = await apiGet('/pools');
+        pools.value = data.pools;
+      } catch(e) {
+        showToast('error', '获取存储池失败: ' + e.message);
+      }
+    }
+    async function loadZvols() {
+      loading.value = true;
+      try {
+        const data = await apiGet('/zvols');
+        zvols.value = data.zvols;
+      } catch(e) {
+        showToast('error', '获取 ZVOL 列表失败: ' + e.message);
+      } finally {
+        loading.value = false;
+      }
+    }
+    async function loadSnapshots(name) {
+      try {
+        const data = await apiGet('/zvols/' + encodeURIComponent(name) + '/snapshots');
+        snapshots.value = data.snapshots;
+      } catch(e) {
+        showToast('error', '获取快照失败: ' + e.message);
+      }
+    }
+
+    // ---------- zvol ops ----------
+    async function createZvol() {
+      if (!createForm.pool || !createForm.name || !createForm.size) {
+        showToast('error', '请填写存储池、名称和大小');
+        return;
+      }
+      creating.value = true;
+      try {
+        await apiPost('/zvols', { ...createForm });
+        showToast('success', 'ZVOL ' + createForm.pool + '/' + createForm.name + ' 创建成功');
+        page.value = 'list';
+        createForm.name = '';
+        await loadZvols();
+      } catch(e) {
+        showToast('error', '创建失败: ' + e.message);
+      } finally {
+        creating.value = false;
+      }
+    }
+
+    function confirmDeleteZvol(z) {
+      confirmModal.value = {
+        title: '删除 ZVOL',
+        msg: '确定要删除 ' + z.name + ' 吗？此操作不可逆，所有数据将永久丢失。',
+        cb: async () => {
+          confirmModal.value = null;
+          try {
+            await apiDelete('/zvols/' + encodeURIComponent(z.name));
+            showToast('success', '已删除 ' + z.name);
+            await loadZvols();
+          } catch(e) {
+            showToast('error', '删除失败: ' + e.message);
+          }
+        }
+      };
+    }
+
+    // mount
+    function showMountModal(z) {
+      mountModal.value = z;
+      mountPoint.value = '';
+    }
+    async function mountZvol() {
+      if (!mountPoint.value) {
+        showToast('error', '请输入挂载点路径');
+        return;
+      }
+      try {
+        const res = await apiPost('/zvols/' + encodeURIComponent(mountModal.value.name) + '/mount', {
+          mountpoint: mountPoint.value
+        });
+        showToast('success', '已挂载到 ' + (res.mountpoint || mountPoint.value));
+        mountModal.value = null;
+        await loadZvols();
+      } catch(e) {
+        showToast('error', '挂载失败: ' + e.message);
+      }
+    }
+    async function unmountZvol(z) {
+      try {
+        await apiPost('/zvols/' + encodeURIComponent(z.name) + '/unmount', {});
+        showToast('success', z.name + ' 已卸载');
+        await loadZvols();
+      } catch(e) {
+        showToast('error', '卸载失败: ' + e.message);
+      }
+    }
+
+    // snapshot
+    async function showSnapshotModal(z) {
+      snapModal.value = z;
+      newSnapName.value = '';
+      await loadSnapshots(z.name);
+    }
+    async function createSnapshot() {
+      if (!newSnapName.value) {
+        showToast('error', '请输入快照名称');
+        return;
+      }
+      try {
+        await apiPost('/zvols/' + encodeURIComponent(snapModal.value.name) + '/snapshot', {
+          snapshot_name: newSnapName.value
+        });
+        showToast('success', '快照 ' + newSnapName.value + ' 已创建');
+        newSnapName.value = '';
+        await loadSnapshots(snapModal.value.name);
+      } catch(e) {
+        showToast('error', '创建快照失败: ' + e.message);
+      }
+    }
+    function confirmDeleteSnap(s) {
+      confirmModal.value = {
+        title: '删除快照',
+        msg: '确定删除快照 ' + s.short_name + ' 吗？',
+        cb: async () => {
+          confirmModal.value = null;
+          try {
+            await apiDelete('/zvols/' + encodeURIComponent(snapModal.value.name) + '/snapshots/' + encodeURIComponent(s.short_name));
+            showToast('success', '快照已删除');
+            await loadSnapshots(snapModal.value.name);
+          } catch(e) {
+            showToast('error', '删除快照失败: ' + e.message);
+          }
+        }
+      };
+    }
+    function confirmRollback(s) {
+      confirmModal.value = {
+        title: '回滚 ZVOL',
+        msg: '确定回滚到快照 ' + s.short_name + ' 吗？此快照之后的所有数据将丢失。',
+        cb: async () => {
+          confirmModal.value = null;
+          try {
+            await apiPost('/zvols/' + encodeURIComponent(snapModal.value.name) + '/rollback', {
+              snapshot: s.short_name
+            });
+            showToast('success', '已回滚到 ' + s.short_name);
+            await loadSnapshots(snapModal.value.name);
+            await loadZvols();
+          } catch(e) {
+            showToast('error', '回滚失败: ' + e.message);
+          }
+        }
+      };
+    }
+
+    // clone
+    async function showCloneModal(z) {
+      cloneModal.value = z;
+      cloneForm.snapshot = '';
+      cloneForm.clone_name = '';
+      cloneForm.target_pool = pools.value.length > 0 ? pools.value[0] : '';
+      try {
+        const data = await apiGet('/zvols/' + encodeURIComponent(z.name) + '/snapshots');
+        cloneSnapshots.value = data.snapshots;
+      } catch(e) {
+        showToast('error', '获取快照列表失败');
+      }
+    }
+    async function cloneZvol() {
+      if (!cloneForm.snapshot || !cloneForm.clone_name || !cloneForm.target_pool) {
+        showToast('error', '请填写所有字段');
+        return;
+      }
+      try {
+        const res = await apiPost('/zvols/' + encodeURIComponent(cloneModal.value.name) + '/clone', cloneForm);
+        showToast('success', '克隆成功: ' + res.clone);
+        cloneModal.value = null;
+        await loadZvols();
+      } catch(e) {
+        showToast('error', '克隆失败: ' + e.message);
+      }
+    }
+
+    // ---------- iscsi ----------
+    async function loadIscsi() {
+      iscsiLoading.value = true;
+      try {
+        const data = await apiGet('/iscsi/targets');
+        iscsiList.value = data.targets;
+        const map = {};
+        for (const t of data.targets) {
+          map[t.zvol] = t;
+        }
+        iscsiTargets.value = map;
+      } catch(e) {
+        // targetcli 未安装时仅给提示，不阻断 ZVOL 管理功能
+        iscsiList.value = [];
+        iscsiTargets.value = {};
+      } finally {
+        iscsiLoading.value = false;
+      }
+    }
+
+    function showIscsiCreateModal(z) {
+      iscsiCreateModal.value = z;
+      iscsiIqn.value = '';
+    }
+
+    async function createIscsiTarget() {
+      if (iscsiIqn.value && !iscsiIqn.value.startsWith('iqn.')) {
+        showToast('error', 'Initiator IQN 必须以 iqn. 开头');
+        return;
+      }
+      try {
+        const res = await apiPost(
+          '/zvols/' + encodeURIComponent(iscsiCreateModal.value.name) + '/iscsi',
+          {
+            initiator_name: iscsiIqn.value || null,
+          }
+        );
+        showToast('success', 'iSCSI 目标已创建: ' + res.iqn);
+        iscsiCreateModal.value = null;
+        await loadIscsi();
+      } catch(e) {
+        showToast('error', '创建 iSCSI 目标失败: ' + e.message);
+      }
+    }
+
+    function showIscsiDetail(z) {
+      const t = iscsiTargets.value[z.name];
+      if (!t) return;
+      iscsiDetailModel.value = {
+        iqn: t.iqn,
+        zvol: t.zvol,
+        portal: t.portal,
+        acls: t.acls || [],
+      };
+      iscsiDetailModal.value = z;
+    }
+
+    function confirmDeleteIscsi(t) {
+      confirmModal.value = {
+        title: '删除 iSCSI 目标',
+        msg: '确定删除 iSCSI 目标 ' + t.iqn + ' 吗？已连接该目标的客户端将立即断开。',
+        cb: async () => {
+          confirmModal.value = null;
+          iscsiDetailModal.value = null;
+          try {
+            await apiDelete('/zvols/' + encodeURIComponent(t.zvol) + '/iscsi');
+            showToast('success', 'iSCSI 目标已删除');
+            await loadIscsi();
+          } catch(e) {
+            showToast('error', '删除 iSCSI 目标失败: ' + e.message);
+          }
+        }
+      };
+    }
+
+    // ---------- init ----------
+    onMounted(async () => {
+      await Promise.all([loadPools(), loadZvols(), loadIscsi()]);
+    });
+
+    return {
+      page, loading, creating, toast,
+      pools, zvols,
+      createForm,
+      mountModal, mountPoint,
+      snapModal, snapshots, newSnapName,
+      cloneModal, cloneSnapshots, cloneForm,
+      confirmModal,
+      iscsiList, iscsiLoading, iscsiTargets,
+      iscsiCreateModal, iscsiDetailModal, iscsiDetailModel, iscsiIqn,
+      createZvol, confirmDeleteZvol,
+      showMountModal, mountZvol, unmountZvol,
+      showSnapshotModal, createSnapshot, confirmDeleteSnap, confirmRollback,
+      showCloneModal, cloneZvol,
+      loadIscsi, showIscsiCreateModal, createIscsiTarget,
+      showIscsiDetail, confirmDeleteIscsi,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

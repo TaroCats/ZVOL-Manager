@@ -238,7 +238,7 @@ input:checked+.slider:before { transform:translateX(18px); }
       <a :class="{active: page==='create'}" @click="page='create'">创建 ZVOL</a>
       <a :class="{active: page==='iscsi'}" @click="page='iscsi'">iSCSI 管理</a>
     </nav>
-    <div class="version">v1.1.0</div>
+    <div class="version">v{{ appVersion }}</div>
   </aside>
 
   <!-- Main -->
@@ -592,6 +592,7 @@ createApp({
     // ---------- data ----------
     const pools = ref([]);
     const zvols = ref([]);
+    const appVersion = ref('');
 
     // create form
     const createForm = reactive({
@@ -624,6 +625,18 @@ createApp({
     const iscsiDetailModal = ref(null);    // { iqn, zvol, portal, acls }
     const iscsiDetailModel = ref({ iqn: '', zvol: '', portal: '', acls: [] });
     const iscsiIqn = ref('');              // initiator IQN for ACL
+    const iscsiSettingsModal = ref(null);
+    const iscsiSettingsModel = ref({ iqn: '', zvol: '' });
+    const iscsiSettings = ref({
+      portal_ip: '0.0.0.0',
+      portal_port: 3260,
+      chap_enabled: false,
+      chap_userid: '',
+      chap_password: '',
+      mutual_enabled: false,
+      mutual_userid: '',
+      mutual_password: '',
+    });
 
     // ---------- toast ----------
     function showToast(type, msg) {
@@ -649,6 +662,18 @@ createApp({
       if (!res.ok) {
         const detail = await res.text();
         throw new Error(detail || res.statusText);
+      }
+      return res.json();
+    }
+    async function apiPut(url, body) {
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || res.statusText);
       }
       return res.json();
     }
@@ -852,7 +877,7 @@ createApp({
         iscsiList.value = data.targets;
         const map = {};
         for (const t of data.targets) {
-          map[t.zvol] = t;
+          map[t.zvol] = { ...t, chap_enabled: t.chap_enabled || false };
         }
         iscsiTargets.value = map;
       } catch(e) {
@@ -919,9 +944,69 @@ createApp({
       };
     }
 
+    async function showIscsiSettings(target) {
+      iscsiSettingsModel.value = { iqn: target.iqn, zvol: target.zvol };
+      try {
+        const s = await apiGet('/zvols/' + encodeURIComponent(target.zvol) + '/iscsi/settings');
+        iscsiSettings.value = {
+          portal_ip: s.portal_ip || '0.0.0.0',
+          portal_port: s.portal_port || 3260,
+          chap_enabled: s.chap_enabled || false,
+          chap_userid: s.chap_userid || '',
+          chap_password: '',
+          mutual_enabled: !!s.mutual_userid,
+          mutual_userid: s.mutual_userid || '',
+          mutual_password: '',
+        };
+      } catch(e) {
+        showToast('error', '加载设置失败: ' + e.message);
+        return;
+      }
+      iscsiSettingsModal.value = target;
+    }
+
+    async function saveIscsiSettings() {
+      const body = {
+        portal_ip: iscsiSettings.value.portal_ip,
+        portal_port: iscsiSettings.value.portal_port,
+        chap_enabled: iscsiSettings.value.chap_enabled,
+      };
+      if (iscsiSettings.value.chap_enabled) {
+        if (!iscsiSettings.value.chap_userid || !iscsiSettings.value.chap_password) {
+          showToast('error', '启用 CHAP 需要填写用户名和密码');
+          return;
+        }
+        body.chap_userid = iscsiSettings.value.chap_userid;
+        body.chap_password = iscsiSettings.value.chap_password;
+      }
+      if (iscsiSettings.value.mutual_enabled) {
+        if (!iscsiSettings.value.mutual_userid || !iscsiSettings.value.mutual_password) {
+          showToast('error', '启用双向 CHAP 需要填写 Mutual 用户名和密码');
+          return;
+        }
+        body.mutual_userid = iscsiSettings.value.mutual_userid;
+        body.mutual_password = iscsiSettings.value.mutual_password;
+      }
+      try {
+        await apiPut('/zvols/' + encodeURIComponent(iscsiSettingsModel.value.zvol) + '/iscsi/settings', body);
+        showToast('success', 'iSCSI 设置已保存');
+        iscsiSettingsModal.value = null;
+        await loadIscsi();
+      } catch(e) {
+        showToast('error', '保存设置失败: ' + e.message);
+      }
+    }
+
+    async function loadVersion() {
+      try {
+        const data = await apiGet('/version');
+        appVersion.value = data.version;
+      } catch { /* ignore — use empty string fallback */ }
+    }
+
     // ---------- init ----------
     onMounted(async () => {
-      await Promise.all([loadPools(), loadZvols(), loadIscsi()]);
+      await Promise.all([loadPools(), loadZvols(), loadIscsi(), loadVersion()]);
     });
 
     return {
@@ -934,12 +1019,15 @@ createApp({
       confirmModal,
       iscsiList, iscsiLoading, iscsiTargets,
       iscsiCreateModal, iscsiDetailModal, iscsiDetailModel, iscsiIqn,
+      iscsiSettingsModal, iscsiSettingsModel, iscsiSettings,
       createZvol, confirmDeleteZvol,
       showMountModal, mountZvol, unmountZvol,
       showSnapshotModal, createSnapshot, confirmDeleteSnap, confirmRollback,
       showCloneModal, cloneZvol,
       loadIscsi, showIscsiCreateModal, createIscsiTarget,
       showIscsiDetail, confirmDeleteIscsi,
+      showIscsiSettings, saveIscsiSettings,
+      appVersion, loadVersion,
     };
   }
 }).mount('#app');

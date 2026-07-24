@@ -85,6 +85,11 @@ def _list_dir(path: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# API — Version
+@app.get("/api/version")
+def get_version():
+    return {"version": app.version}
+
 # API — Pools
 # ---------------------------------------------------------------------------
 @app.get("/api/pools")
@@ -387,6 +392,15 @@ def _iscsi_target_name_for(zvol_name: str) -> str:
     return f"{ISCSI_BASE_IQN}:{safe}"
 
 
+def _iscsi_chap_enabled(iqn: str) -> bool:
+    """Check if CHAP authentication is enabled for an iSCSI target."""
+    try:
+        auth_val = _run(["targetcli", "get", f"/iscsi/{iqn}/tpg1", "attribute", "authentication"])
+        return "authentication=1" in auth_val
+    except HTTPException:
+        return False
+
+
 def _iscsi_zvol_to_target(zvol_name: str) -> Optional[dict]:
     """Look up existing iSCSI target backed by a zvol, return None if not found."""
     target_iqn = _iscsi_target_name_for(zvol_name)
@@ -475,6 +489,7 @@ def list_iscsi_targets():
             "zvol": zvol_name,
             "portal": portal,
             "acls": acls,
+            "chap_enabled": _iscsi_chap_enabled(iqn),
         })
 
     return {"targets": targets}

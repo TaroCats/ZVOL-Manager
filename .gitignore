@@ -1,1 +1,5 @@
 zvol-manager.fpk
+app/__pycache__/
+*.pyc
+*.pyo
+.DS_Store

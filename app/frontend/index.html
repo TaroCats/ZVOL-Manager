@@ -226,6 +226,11 @@
 .slider:before { position:absolute; content:""; height:16px;width:16px; left:3px;bottom:3px; background:#fff; border-radius:50%; transition:.3s; }
 input:checked+.slider { background:#e94560; }
 input:checked+.slider:before { transform:translateX(18px); }
+
+/* Vue transition classes for <transition name="slide"> */
+.slide-enter-active, .slide-leave-active { transition: all 0.25s ease; }
+.slide-enter-from { transform: translateX(120px); opacity: 0; }
+.slide-leave-to   { transform: translateX(120px); opacity: 0; }
   </style>
 </head>
 <body>
@@ -351,8 +356,24 @@ input:checked+.slider:before { transform:translateX(18px); }
       <div class="modal">
         <h3>挂载 ZVOL: {{ mountModal.name }}</h3>
         <div class="form-group">
-          <label>挂载点路径</label>
+          <label>挂载点路径（绝对路径，避开 /etc /var /usr 等系统目录）</label>
           <input v-model="mountPoint" placeholder="/mnt/my-zvol" />
+        </div>
+        <div class="form-group">
+          <label>文件系统</label>
+          <select v-model="mountFilesystem">
+            <option value="ext4">ext4（推荐，通用）</option>
+            <option value="xfs">xfs（大文件性能好）</option>
+            <option value="btrfs">btrfs（快照/校验和）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="force_format" v-model="mountForceFormat" />
+            <label for="force_format" style="margin-bottom:0;">
+              强制覆盖已有文件系统（会清除 ZVOL 上所有数据）
+            </label>
+          </div>
         </div>
         <div class="actions">
           <button class="btn btn-secondary" @click="mountModal=null">取消</button>
@@ -423,10 +444,36 @@ input:checked+.slider:before { transform:translateX(18px); }
 
     <!-- ============ ISCSI MANAGEMENT PAGE ============ -->
     <section v-if="page==='iscsi'">
-      <div class="header">iSCSI 目标管理</div>
+      <div class="header">iSCSI 目标管理（ZVOL 桥接）</div>
+
+      <!-- 服务状态指示 -->
+      <div class="card" style="margin-bottom:12px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="margin-bottom:4px;">
+              <strong>LIO 后端：</strong>
+              <span v-if="iscsiService===null" style="color:#888;">检测中…</span>
+              <span v-else-if="iscsiService.targetcli_installed" style="color:#4caf50;">✓ targetcli 已就绪</span>
+              <span v-else style="color:#f44336;">✗ targetcli 未安装（iSCSI 功能不可用）</span>
+            </div>
+            <div style="margin-bottom:4px;">
+              <strong>门户监听：</strong>
+              <span v-if="iscsiService && iscsiService.portal_active" style="color:#4caf50;">✓ 3260 端口活跃</span>
+              <span v-else style="color:#888;">未检测到监听</span>
+            </div>
+            <div v-if="iscsiService" style="color:#888;margin-top:8px;line-height:1.6;">
+              {{ iscsiService.manage_note }}
+            </div>
+          </div>
+          <a v-if="iscsiService" :href="iscsiService.manage_url" target="_top" class="btn btn-primary btn-sm">
+            打开 fnOS iSCSI 管理 →
+          </a>
+        </div>
+      </div>
+
       <div v-if="iscsiLoading" class="loading">加载中...</div>
       <div v-else-if="iscsiList.length===0" class="card" style="text-align:center;color:#888;">
-        暂无 iSCSI 目标。请在 ZVOL 列表中为 ZVOL 启用 iSCSI 导出。
+        暂无 iSCSI 目标。请在 ZVOL 列表中点「导出 iSCSI」。
       </div>
       <div v-else v-for="t in iscsiList" :key="t.iqn" class="card">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -436,21 +483,13 @@ input:checked+.slider:before { transform:translateX(18px); }
               关联 ZVOL: <strong>{{ t.zvol }}</strong>
             </div>
             <div style="font-size:13px;margin-bottom:4px;">
-              门户地址: <code style="background:#0f0f1a;padding:2px 6px;border-radius:3px;">{{ t.portal }}</code>
+              门户: <code style="background:#0f0f1a;padding:2px 6px;border-radius:3px;">{{ t.portal }}</code>
             </div>
-            <div style="font-size:13px;">
-              ACL 限制:
-              <span v-if="t.acls.length===0" style="color:#888;">无限制（允许任意 initiator）</span>
-              <span v-else v-for="a in t.acls" style="margin-left:6px;">{{ a }}</span>
-            </div>
-            <div style="font-size:13px;">
-              CHAP 认证:
-              <span v-if="t.chap_enabled" style="color:#4caf50;">已启用</span>
-              <span v-else style="color:#888;">未启用</span>
+            <div style="font-size:12px;color:#888;margin-top:6px;">
+              详细配置（CHAP/Portal/ACL）请到 fnOS iSCSI 管理
             </div>
           </div>
           <div>
-            <button class="btn btn-secondary btn-sm" @click="showIscsiSettings(t)">设置</button>
             <button class="btn btn-danger btn-sm" @click="confirmDeleteIscsi(t)">删除</button>
           </div>
         </div>
@@ -461,14 +500,13 @@ input:checked+.slider:before { transform:translateX(18px); }
     <div v-if="iscsiCreateModal" class="modal-overlay" @click.self="iscsiCreateModal=null">
       <div class="modal">
         <h3>导出 iSCSI — {{ iscsiCreateModal.name }}</h3>
-        <p style="color:#888;font-size:13px;margin-bottom:12px;">
+        <p style="color:#888;font-size:13px;margin-bottom:8px;">
           设备路径: /dev/zvol/{{ iscsiCreateModal.name }}
         </p>
-        <div class="form-group">
-          <label>Initiator 限制 (ACL，可选)</label>
-          <input v-model="iscsiIqn" placeholder="例如: iqn.2025-01.com.client:initiator1" />
-          <div style="color:#666;font-size:11px;margin-top:4px;">留空则允许任意 initiator 连接</div>
-        </div>
+        <p style="color:#f0a020;font-size:12px;line-height:1.6;margin-bottom:12px;">
+          提示：iSCSI 目标创建后，<br>
+          <strong>CHAP / Portal / ACL 等详细配置请到 fnOS 系统设置 → iSCSI 服务</strong>。
+        </p>
         <div class="actions">
           <button class="btn btn-secondary" @click="iscsiCreateModal=null">取消</button>
           <button class="btn btn-primary" @click="createIscsiTarget">创建 iSCSI 目标</button>
@@ -484,82 +522,13 @@ input:checked+.slider:before { transform:translateX(18px); }
           <div><strong>IQN:</strong> <code style="background:#0f0f1a;padding:2px 6px;border-radius:3px;">{{ iscsiDetailModel.iqn }}</code></div>
           <div><strong>门户:</strong> {{ iscsiDetailModel.portal }}</div>
           <div><strong>设备路径:</strong> /dev/zvol/{{ iscsiDetailModel.zvol }}</div>
-          <div><strong>ACL 限制:</strong>
-            <span v-if="iscsiDetailModel.acls.length===0" style="color:#888;">无限制</span>
-            <span v-else v-for="a in iscsiDetailModel.acls" style="margin-left:4px;">{{ a }}</span>
-          </div>
         </div>
+        <p style="color:#f0a020;font-size:12px;margin-top:8px;">
+          CHAP / Portal / ACL 等详细配置请到 fnOS iSCSI 管理
+        </p>
         <div class="actions">
           <button class="btn btn-danger" @click="confirmDeleteIscsi(iscsiDetailModel); iscsiDetailModal=null">删除目标</button>
           <button class="btn btn-secondary" @click="iscsiDetailModal=null">关闭</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ============ ISCSI SETTINGS MODAL ============ -->
-    <div v-if="iscsiSettingsModal" class="modal-overlay" @click.self="iscsiSettingsModal=null">
-      <div class="modal" style="max-width:520px;">
-        <h3>iSCSI 设置 — {{ iscsiSettingsModel.zvol }}</h3>
-        <p style="color:#888;font-size:12px;margin-bottom:16px;">IQN: {{ iscsiSettingsModel.iqn }}</p>
-
-        <!-- Portal 设置 -->
-        <div class="form-group">
-          <label>监听 IP</label>
-          <input v-model="iscsiSettings.portal_ip" placeholder="0.0.0.0（所有网卡）" />
-        </div>
-        <div class="form-group">
-          <label>监听端口</label>
-          <input v-model="iscsiSettings.portal_port" type="number" placeholder="3260" />
-        </div>
-
-        <hr style="border-color:#333;margin:16px 0;" />
-
-        <!-- CHAP 认证 -->
-        <div class="form-group">
-          <label style="display:flex;align-items:center;justify-content:space-between;">
-            <span>CHAP 认证（单向）</span>
-            <label class="switch">
-              <input type="checkbox" v-model="iscsiSettings.chap_enabled" />
-              <span class="slider"></span>
-            </label>
-          </label>
-        </div>
-        <div v-if="iscsiSettings.chap_enabled">
-          <div class="form-group">
-            <label>CHAP 用户名</label>
-            <input v-model="iscsiSettings.chap_userid" placeholder="例如: initiator1" />
-          </div>
-          <div class="form-group">
-            <label>CHAP 密码</label>
-            <input v-model="iscsiSettings.chap_password" type="password" placeholder="12-16 位字符" />
-          </div>
-        </div>
-
-        <!-- Mutual CHAP -->
-        <div class="form-group" style="margin-top:8px;">
-          <label style="display:flex;align-items:center;justify-content:space-between;">
-            <span>双向 CHAP（Mutual）</span>
-            <label class="switch">
-              <input type="checkbox" v-model="iscsiSettings.mutual_enabled" />
-              <span class="slider"></span>
-            </label>
-          </label>
-          <div style="color:#666;font-size:11px;">Target 端主动认证 Initiator，比单向更安全</div>
-        </div>
-        <div v-if="iscsiSettings.mutual_enabled">
-          <div class="form-group">
-            <label>Mutual CHAP 用户名</label>
-            <input v-model="iscsiSettings.mutual_userid" placeholder="例如: target1" />
-          </div>
-          <div class="form-group">
-            <label>Mutual CHAP 密码</label>
-            <input v-model="iscsiSettings.mutual_password" type="password" placeholder="12-16 位字符" />
-          </div>
-        </div>
-
-        <div class="actions" style="margin-top:20px;">
-          <button class="btn btn-secondary" @click="iscsiSettingsModal=null">取消</button>
-          <button class="btn btn-primary" @click="saveIscsiSettings">保存设置</button>
         </div>
       </div>
     </div>
@@ -603,6 +572,8 @@ createApp({
     // mount modal
     const mountModal = ref(null);
     const mountPoint = ref('');
+    const mountFilesystem = ref('ext4');
+    const mountForceFormat = ref(false);
 
     // snapshot modal
     const snapModal = ref(null);
@@ -624,33 +595,34 @@ createApp({
     const iscsiCreateModal = ref(null);    // { name } — the zvol to export
     const iscsiDetailModal = ref(null);    // { iqn, zvol, portal, acls }
     const iscsiDetailModel = ref({ iqn: '', zvol: '', portal: '', acls: [] });
-    const iscsiIqn = ref('');              // initiator IQN for ACL
-    const iscsiSettingsModal = ref(null);
-    const iscsiSettingsModel = ref({ iqn: '', zvol: '' });
-    const iscsiSettings = ref({
-      portal_ip: '0.0.0.0',
-      portal_port: 3260,
-      chap_enabled: false,
-      chap_userid: '',
-      chap_password: '',
-      mutual_enabled: false,
-      mutual_userid: '',
-      mutual_password: '',
-    });
+    const iscsiService = ref(null);        // null = 检测中；object = backend status
 
     // ---------- toast ----------
+    let toastTimer = null;
     function showToast(type, msg) {
       toast.value = { type, msg };
-      setTimeout(() => toast.value = null, 3000);
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.value = null;
+        toastTimer = null;
+      }, 3000);
     }
 
     // ---------- api wrappers ----------
+    async function _parseError(res) {
+      // FastAPI 默认 detail 是字符串（也可能是 JSON 对象），统一提取
+      let detail = res.statusText;
+      try {
+        const data = await res.json();
+        detail = (data && data.detail) ? data.detail : JSON.stringify(data);
+      } catch {
+        try { detail = await res.text(); } catch { /* keep statusText */ }
+      }
+      return detail || res.statusText;
+    }
     async function apiGet(path) {
       const res = await fetch(apiBase + path);
-      if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || res.statusText);
-      }
+      if (!res.ok) throw new Error(await _parseError(res));
       return res.json();
     }
     async function apiPost(path, body) {
@@ -659,30 +631,21 @@ createApp({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || res.statusText);
-      }
+      if (!res.ok) throw new Error(await _parseError(res));
       return res.json();
     }
-    async function apiPut(url, body) {
-      const res = await fetch(url, {
+    async function apiPut(path, body) {
+      const res = await fetch(apiBase + path, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || res.statusText);
-      }
+      if (!res.ok) throw new Error(await _parseError(res));
       return res.json();
     }
     async function apiDelete(path) {
       const res = await fetch(apiBase + path, { method: 'DELETE' });
-      if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || res.statusText);
-      }
+      if (!res.ok) throw new Error(await _parseError(res));
       return res.json();
     }
 
@@ -721,6 +684,14 @@ createApp({
         showToast('error', '请填写存储池、名称和大小');
         return;
       }
+      if (!/^\d+(\.\d+)?[KMGTP]$/i.test(createForm.size.trim())) {
+        showToast('error', '大小格式无效，例如 10G / 500M / 1T');
+        return;
+      }
+      if (!/^[a-zA-Z0-9_\-:.@+]+$/.test(createForm.name.trim())) {
+        showToast('error', '名称仅允许字母、数字、下划线、连字符、点、冒号、@ 和加号');
+        return;
+      }
       creating.value = true;
       try {
         await apiPost('/zvols', { ...createForm });
@@ -745,7 +716,34 @@ createApp({
             await apiDelete('/zvols/' + encodeURIComponent(z.name));
             showToast('success', '已删除 ' + z.name);
             await loadZvols();
+            await loadIscsi();
           } catch(e) {
+            // iSCSI 仍在导出 → 提示先删 iSCSI 或强制删除
+            if (/iSCSI/.test(e.message) && confirm(e.message + '\n\n是否强制（force=true）一并删除其 iSCSI 导出？')) {
+              try {
+                await apiDelete('/zvols/' + encodeURIComponent(z.name) + '?force=true');
+                showToast('success', '已强制删除 ' + z.name);
+                await loadZvols();
+                await loadIscsi();
+                return;
+              } catch(e2) {
+                showToast('error', '强制删除失败: ' + e2.message);
+                return;
+              }
+            }
+            // 设备被进程占用
+            if (/占用/.test(e.message) && confirm(e.message + '\n\n是否强制（force=true）删除？')) {
+              try {
+                await apiDelete('/zvols/' + encodeURIComponent(z.name) + '?force=true');
+                showToast('success', '已强制删除 ' + z.name);
+                await loadZvols();
+                await loadIscsi();
+                return;
+              } catch(e2) {
+                showToast('error', '强制删除失败: ' + e2.message);
+                return;
+              }
+            }
             showToast('error', '删除失败: ' + e.message);
           }
         }
@@ -756,6 +754,8 @@ createApp({
     function showMountModal(z) {
       mountModal.value = z;
       mountPoint.value = '';
+      mountFilesystem.value = 'ext4';
+      mountForceFormat.value = false;
     }
     async function mountZvol() {
       if (!mountPoint.value) {
@@ -764,7 +764,9 @@ createApp({
       }
       try {
         const res = await apiPost('/zvols/' + encodeURIComponent(mountModal.value.name) + '/mount', {
-          mountpoint: mountPoint.value
+          mountpoint: mountPoint.value,
+          filesystem: mountFilesystem.value,
+          force_format: mountForceFormat.value,
         });
         showToast('success', '已挂载到 ' + (res.mountpoint || mountPoint.value));
         mountModal.value = null;
@@ -774,11 +776,25 @@ createApp({
       }
     }
     async function unmountZvol(z) {
+      if (!confirm('确定要卸载 ' + z.name + ' 吗？\n\n如设备被进程占用，可传入 force=true 强制卸载。')) {
+        return;
+      }
       try {
-        await apiPost('/zvols/' + encodeURIComponent(z.name) + '/unmount', {});
-        showToast('success', z.name + ' 已卸载');
+        const res = await apiPost('/zvols/' + encodeURIComponent(z.name) + '/unmount', {});
+        showToast('success', z.name + (res.note ? '（' + res.note + '）' : '') + ' 已卸载');
         await loadZvols();
       } catch(e) {
+        if (/busy|device/i.test(e.message) && confirm('设备正被占用，是否强制（lazy）卸载？\n\n' + e.message)) {
+          try {
+            const res2 = await apiPost('/zvols/' + encodeURIComponent(z.name) + '/unmount', { force: true });
+            showToast('success', z.name + ' 已强制卸载');
+            await loadZvols();
+            return;
+          } catch(e2) {
+            showToast('error', '强制卸载失败: ' + e2.message);
+            return;
+          }
+        }
         showToast('error', '卸载失败: ' + e.message);
       }
     }
@@ -816,6 +832,17 @@ createApp({
             showToast('success', '快照已删除');
             await loadSnapshots(snapModal.value.name);
           } catch(e) {
+            if (/依赖/.test(e.message) && confirm(e.message + '\n\n是否强制删除（force=true）？\n这会让依赖它的 ZVOL 克隆进入坏状态。')) {
+              try {
+                await apiDelete('/zvols/' + encodeURIComponent(snapModal.value.name) + '/snapshots/' + encodeURIComponent(s.short_name) + '?force=true');
+                showToast('success', '快照已强制删除');
+                await loadSnapshots(snapModal.value.name);
+                return;
+              } catch(e2) {
+                showToast('error', '强制删除失败: ' + e2.message);
+                return;
+              }
+            }
             showToast('error', '删除快照失败: ' + e.message);
           }
         }
@@ -829,12 +856,32 @@ createApp({
           confirmModal.value = null;
           try {
             await apiPost('/zvols/' + encodeURIComponent(snapModal.value.name) + '/rollback', {
-              snapshot: s.short_name
+              snapshot: s.short_name,
+              force: false,
             });
             showToast('success', '已回滚到 ' + s.short_name);
             await loadSnapshots(snapModal.value.name);
             await loadZvols();
           } catch(e) {
+            if (/更新的快照/.test(e.message) && confirm(e.message + '\n\n是否强制（-r）回滚？\n这会一并销毁中间的快照。')) {
+              try {
+                await apiPost('/zvols/' + encodeURIComponent(snapModal.value.name) + '/rollback', {
+                  snapshot: s.short_name,
+                  force: true,
+                });
+                showToast('success', '已强制回滚到 ' + s.short_name);
+                await loadSnapshots(snapModal.value.name);
+                await loadZvols();
+                return;
+              } catch(e2) {
+                showToast('error', '强制回滚失败: ' + e2.message);
+                return;
+              }
+            }
+            if (/iSCSI/.test(e.message)) {
+              showToast('error', e.message);
+              return;
+            }
             showToast('error', '回滚失败: ' + e.message);
           }
         }
@@ -888,23 +935,32 @@ createApp({
         iscsiLoading.value = false;
       }
     }
+    async function loadIscsiService() {
+      try {
+        const s = await apiGet('/iscsi/service-status');
+        iscsiService.value = s;
+      } catch(e) {
+        iscsiService.value = {
+          targetcli_installed: false,
+          lio_module_loaded: false,
+          portal_active: false,
+          manage_url: '/fnos/iscsi',
+          manage_note: '无法获取服务状态，请检查后端',
+        };
+      }
+    }
 
     function showIscsiCreateModal(z) {
       iscsiCreateModal.value = z;
-      iscsiIqn.value = '';
     }
 
     async function createIscsiTarget() {
-      if (iscsiIqn.value && !iscsiIqn.value.startsWith('iqn.')) {
-        showToast('error', 'Initiator IQN 必须以 iqn. 开头');
-        return;
-      }
+      // iSCSI 详细配置（CHAP/Portal/ACL）走 fnOS 官方 iSCSI 管理
+      // 本 app 只负责把 ZVOL 桥接为 LIO target
       try {
         const res = await apiPost(
           '/zvols/' + encodeURIComponent(iscsiCreateModal.value.name) + '/iscsi',
-          {
-            initiator_name: iscsiIqn.value || null,
-          }
+          {}
         );
         showToast('success', 'iSCSI 目标已创建: ' + res.iqn);
         iscsiCreateModal.value = null;
@@ -944,59 +1000,6 @@ createApp({
       };
     }
 
-    async function showIscsiSettings(target) {
-      iscsiSettingsModel.value = { iqn: target.iqn, zvol: target.zvol };
-      try {
-        const s = await apiGet('/zvols/' + encodeURIComponent(target.zvol) + '/iscsi/settings');
-        iscsiSettings.value = {
-          portal_ip: s.portal_ip || '0.0.0.0',
-          portal_port: s.portal_port || 3260,
-          chap_enabled: s.chap_enabled || false,
-          chap_userid: s.chap_userid || '',
-          chap_password: '',
-          mutual_enabled: !!s.mutual_userid,
-          mutual_userid: s.mutual_userid || '',
-          mutual_password: '',
-        };
-      } catch(e) {
-        showToast('error', '加载设置失败: ' + e.message);
-        return;
-      }
-      iscsiSettingsModal.value = target;
-    }
-
-    async function saveIscsiSettings() {
-      const body = {
-        portal_ip: iscsiSettings.value.portal_ip,
-        portal_port: iscsiSettings.value.portal_port,
-        chap_enabled: iscsiSettings.value.chap_enabled,
-      };
-      if (iscsiSettings.value.chap_enabled) {
-        if (!iscsiSettings.value.chap_userid || !iscsiSettings.value.chap_password) {
-          showToast('error', '启用 CHAP 需要填写用户名和密码');
-          return;
-        }
-        body.chap_userid = iscsiSettings.value.chap_userid;
-        body.chap_password = iscsiSettings.value.chap_password;
-      }
-      if (iscsiSettings.value.mutual_enabled) {
-        if (!iscsiSettings.value.mutual_userid || !iscsiSettings.value.mutual_password) {
-          showToast('error', '启用双向 CHAP 需要填写 Mutual 用户名和密码');
-          return;
-        }
-        body.mutual_userid = iscsiSettings.value.mutual_userid;
-        body.mutual_password = iscsiSettings.value.mutual_password;
-      }
-      try {
-        await apiPut('/zvols/' + encodeURIComponent(iscsiSettingsModel.value.zvol) + '/iscsi/settings', body);
-        showToast('success', 'iSCSI 设置已保存');
-        iscsiSettingsModal.value = null;
-        await loadIscsi();
-      } catch(e) {
-        showToast('error', '保存设置失败: ' + e.message);
-      }
-    }
-
     async function loadVersion() {
       try {
         const data = await apiGet('/version');
@@ -1006,27 +1009,26 @@ createApp({
 
     // ---------- init ----------
     onMounted(async () => {
-      await Promise.all([loadPools(), loadZvols(), loadIscsi(), loadVersion()]);
+      await Promise.all([loadPools(), loadZvols(), loadIscsi(), loadIscsiService(), loadVersion()]);
     });
 
     return {
       page, loading, creating, toast,
       pools, zvols,
       createForm,
-      mountModal, mountPoint,
+      mountModal, mountPoint, mountFilesystem, mountForceFormat,
       snapModal, snapshots, newSnapName,
       cloneModal, cloneSnapshots, cloneForm,
       confirmModal,
-      iscsiList, iscsiLoading, iscsiTargets,
-      iscsiCreateModal, iscsiDetailModal, iscsiDetailModel, iscsiIqn,
-      iscsiSettingsModal, iscsiSettingsModel, iscsiSettings,
+      iscsiList, iscsiLoading, iscsiTargets, iscsiService,
+      iscsiCreateModal, iscsiDetailModal, iscsiDetailModel,
       createZvol, confirmDeleteZvol,
       showMountModal, mountZvol, unmountZvol,
       showSnapshotModal, createSnapshot, confirmDeleteSnap, confirmRollback,
       showCloneModal, cloneZvol,
-      loadIscsi, showIscsiCreateModal, createIscsiTarget,
+      loadIscsi, loadIscsiService,
+      showIscsiCreateModal, createIscsiTarget,
       showIscsiDetail, confirmDeleteIscsi,
-      showIscsiSettings, saveIscsiSettings,
       appVersion, loadVersion,
     };
   }

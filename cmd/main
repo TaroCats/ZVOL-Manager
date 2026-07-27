@@ -26,23 +26,44 @@ log() {
 
 # -------------------------------------------------------
 # 清理端口上残留的 uvicorn 进程（自动停用时 stop 可能未被调用）
+# 会处理端口上挂的多个 PID，逐个检查并清理
 # -------------------------------------------------------
 clean_port() {
-    local port_pid
-    port_pid=$(fuser "${PORT}/tcp" 2>/dev/null || true)
-    if [ -z "${port_pid}" ]; then
+    local pids
+    pids=$(fuser "${PORT}/tcp" 2>/dev/null || true)
+    if [ -z "${pids}" ]; then
         return 0
     fi
 
-    log "端口 ${PORT} 被进程 ${port_pid} 占用，检查..."
-    if ps -p "${port_pid}" -o cmd= 2>/dev/null | grep -q "uvicorn backend:app"; then
-        log "检测到旧的 uvicorn 残留进程 (PID: ${port_pid})，正在终止..."
-        kill -TERM "${port_pid}" 2>/dev/null || true
-        sleep 0.5
-        kill -9 "${port_pid}" 2>/dev/null || true
+    log "端口 ${PORT} 上有进程: ${pids}"
+    local killed_any=0
+    local other_blocker=0
 
+    for pid in ${pids}; do
+        if ! [[ "${pid}" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        local cmdline
+        cmdline=$(ps -p "${pid}" -o cmd= 2>/dev/null || true)
+        if echo "${cmdline}" | grep -q "uvicorn backend:app"; then
+            log "检测到旧 uvicorn (PID: ${pid})，正在终止..."
+            kill -TERM "${pid}" 2>/dev/null || true
+            sleep 0.3
+            kill -9 "${pid}" 2>/dev/null || true
+            killed_any=1
+        else
+            log "错误：端口 ${PORT} 被其他进程占用 (PID: ${pid}, cmd: ${cmdline})"
+            other_blocker=1
+        fi
+    done
+
+    if [ ${other_blocker} -ne 0 ]; then
+        return 1
+    fi
+
+    if [ ${killed_any} -eq 1 ]; then
         local waited=0
-        while fuser "${PORT}/tcp" 2>/dev/null && [ ${waited} -lt 10 ]; do
+        while fuser "${PORT}/tcp" 2>/dev/null && [ ${waited} -lt 20 ]; do
             sleep 0.3
             waited=$((waited + 1))
         done
@@ -52,12 +73,8 @@ clean_port() {
             return 1
         fi
         log "旧进程已终止，端口 ${PORT} 已释放"
-        return 0
     fi
-
-    log "错误：端口 ${PORT} 被其他进程占用 (PID: ${port_pid})"
-    ps -p "${port_pid}" -o pid,cmd= 2>/dev/null >> "${LOG_FILE}"
-    return 1
+    return 0
 }
 
 start() {

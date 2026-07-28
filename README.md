@@ -7,7 +7,7 @@
 1. 创建 ZVOL
 2. 注册为 `LIO /backstores/block` 的 `IBLOCK`
 3. 创建 iSCSI target
-4. 创建 target 对应的 LUN
+4. 单独为 target 挂载 LUN
 5. 配置 Portal
 6. 配置 ACL
 7. 配置 CHAP
@@ -26,12 +26,12 @@
 
 ## 当前功能
 
-- 查看 ZFS 存储池
+- 读取 ZFS 存储池并用于创建表单下拉选择
 - 查看 ZVOL 列表与核心参数
 - 创建 ZVOL
 - 创建 / 删除 `IBLOCK backstore`
 - 创建 / 删除 iSCSI target
-- 自动将 backstore 挂到 target 的 LUN
+- 单独创建 LUN 并挂载已有 backstore
 - 管理 Portal
 - 管理 ACL
 - 给 Target 或 ACL 写入 CHAP
@@ -102,7 +102,7 @@ fnpack build
 
 - ZVOL
 - IBLOCK backstore
-- iSCSI target / LUN
+- 分离的 iSCSI target / LUN 创建流程
 - Portal
 - ACL
 - CHAP

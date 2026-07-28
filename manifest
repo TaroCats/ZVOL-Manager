@@ -1,5 +1,5 @@
 appname=zvol-manager
-version=1.2.0
+version=1.3.0
 display_name=ZVOL Manager
 desc=基于帖子实战方案的 ZFS ZVOL + LIO IBLOCK + iSCSI Target 管理工具。应用直接调用 zfs 与 targetcli，完成 ZVOL、Backstore、Target、LUN、Portal、ACL、CHAP 的创建与配置。
 source=thirdparty
@@ -15,4 +15,4 @@ desktop_uidir=ui
 desktop_applaunchname=zvol-manager.main
 ctl_stop=true
 install_dep_apps=python312
-changelog=v1.2.0：继续补齐帖子里的 target 侧配置，新增 Portal、ACL、CHAP 配置接口与前端面板；MCS 以多 portal/多路径说明方式纳入应用，便于后续结合 initiator 侧多连接或 multipath 使用。
+changelog=v1.3.0：调整创建流程与界面交互，存储池改为下拉选择并隐藏独立展示模块，ZVOL 默认容量改为 10G，同时将 iSCSI Target 与 LUN 创建拆分为两个独立步骤。

@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 ROOT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 CONFIGFS_TARGET_ROOT = Path("/sys/kernel/config/target")
@@ -84,11 +84,12 @@ class CreateBackstoreRequest(BaseModel):
 
 
 class CreateIscsiTargetRequest(BaseModel):
-    zvol_name: str
     iqn: str = Field(description="例如 iqn.2026-07.local.fnos:steam")
-    backstore_name: Optional[str] = None
-    initiator_iqn: Optional[str] = None
-    auto_create_backstore: bool = True
+    tpg: int = 1
+
+
+class CreateIscsiLunRequest(BaseModel):
+    backstore_name: str
     tpg: int = 1
 
 
@@ -217,6 +218,14 @@ def ensure_parent_dataset(full_parent: str) -> None:
     if probe.returncode == 0:
         return
     run_cmd(["zfs", "create", "-o", "mountpoint=none", full_parent])
+
+
+def get_zfs_property(dataset: str, prop: str, default: str = "-") -> str:
+    result = run_result(["zfs", "get", "-H", "-o", "value", prop, dataset], timeout=30)
+    if result.returncode != 0:
+        return default
+    value = (result.stdout or "").strip()
+    return value or default
 
 
 def read_backstores() -> list[dict]:
@@ -506,7 +515,7 @@ def list_zvols():
             "-t",
             "volume",
             "-o",
-            "name,volsize,used,refer,compressratio,volblocksize,compression,sync,referreservation",
+            "name,volsize,used,refer",
         ]
     )
 
@@ -520,7 +529,7 @@ def list_zvols():
     zvols = []
     for line in output.splitlines():
         parts = line.split("\t")
-        if len(parts) != 9:
+        if len(parts) != 4:
             continue
         name = parts[0]
         backstore = backstores.get(name)
@@ -534,11 +543,11 @@ def list_zvols():
                 "volsize": parts[1],
                 "used": parts[2],
                 "refer": parts[3],
-                "compressratio": parts[4],
-                "volblocksize": parts[5],
-                "compression": parts[6],
-                "sync": parts[7],
-                "refreservation": parts[8],
+                "compressratio": get_zfs_property(name, "compressratio"),
+                "volblocksize": get_zfs_property(name, "volblocksize"),
+                "compression": get_zfs_property(name, "compression"),
+                "sync": get_zfs_property(name, "sync"),
+                "refreservation": get_zfs_property(name, "refreservation"),
                 "backstore": backstore,
                 "iscsi_targets": target_iqns,
             }
@@ -641,45 +650,18 @@ def list_iscsi_targets():
 @app.post("/api/iscsi/targets")
 def create_iscsi_target(payload: CreateIscsiTargetRequest):
     ensure_supported_runtime()
-    zvol_name = normalize_zvol_name(payload.zvol_name)
     iqn = require_iqn(payload.iqn)
-    backstore_name = require_safe_name(
-        payload.backstore_name or default_backstore_name(zvol_name),
-        "Backstore 名称",
-    )
-    initiator_iqn = require_iqn(payload.initiator_iqn, "Initiator IQN") if payload.initiator_iqn else None
     if payload.tpg < 1:
         raise HTTPException(status_code=400, detail="TPG 必须大于等于 1")
-
-    created_backstore = False
-    if not get_backstore(backstore_name):
-        if not payload.auto_create_backstore:
-            raise HTTPException(status_code=404, detail="Backstore 不存在，请先创建或勾选自动创建")
-        create_backstore_impl(zvol_name, backstore_name)
-        created_backstore = True
 
     if get_target(iqn):
         raise HTTPException(status_code=409, detail="iSCSI Target 已存在")
 
-    tpg_path = f"/iscsi/{iqn}/tpg{payload.tpg}"
     try:
         run_cmd(["targetcli", "/iscsi", "create", iqn], timeout=120)
-        run_cmd(
-            [
-                "targetcli",
-                f"{tpg_path}/luns",
-                "create",
-                f"/backstores/block/{backstore_name}",
-            ],
-            timeout=120,
-        )
-        if initiator_iqn:
-            run_cmd(["targetcli", f"{tpg_path}/acls", "create", initiator_iqn], timeout=120)
     except HTTPException:
         if get_target(iqn):
             run_result(["targetcli", "/iscsi", "delete", iqn], timeout=120)
-        if created_backstore and get_backstore(backstore_name) and not backstore_is_used(backstore_name):
-            run_result(["targetcli", "/backstores/block", "delete", backstore_name], timeout=120)
         raise
 
     target = get_target(iqn)
@@ -689,8 +671,36 @@ def create_iscsi_target(payload: CreateIscsiTargetRequest):
     return {
         "message": "iSCSI Target 创建成功",
         "target": target,
-        "backstore_name": backstore_name,
     }
+
+
+@app.post("/api/iscsi/targets/{iqn}/luns")
+def create_iscsi_lun(iqn: str, payload: CreateIscsiLunRequest):
+    ensure_supported_runtime()
+    iqn = require_iqn(iqn)
+    backstore_name = require_safe_name(payload.backstore_name, "Backstore 名称")
+    if payload.tpg < 1:
+        raise HTTPException(status_code=400, detail="TPG 必须大于等于 1")
+    target = get_target(iqn)
+    if not target:
+        raise HTTPException(status_code=404, detail="iSCSI Target 不存在")
+    if not get_backstore(backstore_name):
+        raise HTTPException(status_code=404, detail="Backstore 不存在")
+    if backstore_name in target["backstores"]:
+        raise HTTPException(status_code=409, detail="该 Backstore 已绑定到当前 Target")
+
+    tpg_path = targetcli_tpg_path(iqn, payload.tpg)
+    run_cmd(
+        [
+            "targetcli",
+            f"{tpg_path}/luns",
+            "create",
+            f"/backstores/block/{backstore_name}",
+        ],
+        timeout=120,
+    )
+    targetcli_saveconfig()
+    return {"message": "LUN 创建成功", "target": get_target(iqn), "backstore_name": backstore_name}
 
 
 @app.delete("/api/iscsi/targets/{iqn}")

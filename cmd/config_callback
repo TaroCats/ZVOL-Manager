@@ -1,0 +1,11 @@
+#!/bin/bash
+
+UI_CONFIG="${TRIM_APPDEST}/ui/config"
+PORT="${WEB_PORT:-8765}"
+
+if [ -f "${UI_CONFIG}" ]; then
+    sed -i.tmp "s/\"port\": \"[0-9][0-9]*\"/\"port\": \"${PORT}\"/" "${UI_CONFIG}" 2>/dev/null || true
+    rm -f "${UI_CONFIG}.tmp"
+fi
+
+exit 0

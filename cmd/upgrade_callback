@@ -1,0 +1,10 @@
+#!/bin/bash
+
+APP_BASE="${TRIM_APPDEST}"
+
+if [ ! -x "${APP_BASE}/.venv/bin/python3" ]; then
+    exit 1
+fi
+
+"${APP_BASE}/.venv/bin/pip" install -r "${APP_BASE}/requirements.txt" >> "${TRIM_PKGVAR}/zvol-manager.log" 2>&1 || true
+exit 0

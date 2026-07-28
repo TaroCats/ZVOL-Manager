@@ -1,0 +1,108 @@
+#!/bin/bash
+
+APP_BASE="${TRIM_APPDEST}"
+PORT="${WEB_PORT:-8765}"
+HOST="0.0.0.0"
+PID_FILE="${TRIM_PKGVAR}/zvol-manager.pid"
+LOG_FILE="${TRIM_PKGVAR}/zvol-manager.log"
+VENV_PYTHON="${APP_BASE}/.venv/bin/python3"
+
+mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${LOG_FILE}"
+}
+
+clean_port() {
+    local pids
+    pids=$(fuser "${PORT}/tcp" 2>/dev/null || true)
+    if [ -z "${pids}" ]; then
+        return 0
+    fi
+
+    for pid in ${pids}; do
+        if [[ "${pid}" =~ ^[0-9]+$ ]]; then
+            kill -TERM "${pid}" 2>/dev/null || true
+            sleep 0.3
+            kill -9 "${pid}" 2>/dev/null || true
+        fi
+    done
+    return 0
+}
+
+start() {
+    if [ -f "${PID_FILE}" ]; then
+        local pid
+        pid=$(cat "${PID_FILE}" 2>/dev/null)
+        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+            echo "ZVOL Manager 已运行 (PID: ${pid})"
+            exit 0
+        fi
+        rm -f "${PID_FILE}"
+    fi
+
+    if [ ! -x "${VENV_PYTHON}" ]; then
+        echo "错误：虚拟环境不存在，请重新安装应用" >&2
+        exit 1
+    fi
+
+    clean_port
+
+    cd "${APP_BASE}" || exit 1
+    log "启动 ZVOL Manager (${HOST}:${PORT})"
+    nohup "${VENV_PYTHON}" -m uvicorn backend:app --host "${HOST}" --port "${PORT}" >> "${LOG_FILE}" 2>&1 &
+    echo $! > "${PID_FILE}"
+    sleep 1
+
+    if kill -0 "$(cat "${PID_FILE}")" 2>/dev/null; then
+        echo "ZVOL Manager 启动成功"
+        exit 0
+    fi
+
+    echo "错误：ZVOL Manager 启动失败" >&2
+    exit 1
+}
+
+stop() {
+    if [ -f "${PID_FILE}" ]; then
+        local pid
+        pid=$(cat "${PID_FILE}" 2>/dev/null)
+        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+            kill "${pid}" 2>/dev/null || true
+            sleep 1
+            kill -9 "${pid}" 2>/dev/null || true
+        fi
+        rm -f "${PID_FILE}"
+    fi
+    fuser -k "${PORT}/tcp" 2>/dev/null || true
+    echo "ZVOL Manager 已停止"
+    exit 0
+}
+
+status() {
+    if [ ! -f "${PID_FILE}" ]; then
+        echo "ZVOL Manager 未运行"
+        exit 3
+    fi
+
+    local pid
+    pid=$(cat "${PID_FILE}" 2>/dev/null)
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+        echo "ZVOL Manager 运行中 (PID: ${pid})"
+        exit 0
+    fi
+
+    rm -f "${PID_FILE}"
+    echo "ZVOL Manager 未运行"
+    exit 3
+}
+
+case "${1}" in
+    start) start ;;
+    stop) stop ;;
+    status) status ;;
+    *)
+        echo "用法: $0 {start|stop|status}"
+        exit 1
+        ;;
+esac

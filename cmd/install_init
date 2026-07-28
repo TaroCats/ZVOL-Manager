@@ -1,0 +1,18 @@
+#!/bin/bash
+
+LOG="${TRIM_TEMP_LOGFILE}"
+
+echo "ZVOL Manager 安装前检查" >> "${LOG}"
+echo "当前版本将直接调用 zfs + targetcli 管理 ZVOL / IBLOCK / iSCSI target" >> "${LOG}"
+
+for cmd in zfs zpool targetcli fuser; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+        echo "警告：未检测到 ${cmd} 命令" >> "${LOG}"
+    fi
+done
+
+if [ -f /proc/modules ] && ! grep -q '^target_core_mod' /proc/modules 2>/dev/null; then
+    echo "提示：未检测到 target_core_mod 模块，安装后会尝试加载" >> "${LOG}"
+fi
+
+exit 0

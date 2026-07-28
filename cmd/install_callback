@@ -1,0 +1,50 @@
+#!/bin/bash
+
+RUNTIME_PYTHON=/var/apps/python312/target/bin/python3
+APP_BASE="${TRIM_APPDEST}"
+UI_CONFIG="${APP_BASE}/ui/config"
+PORT="${WEB_PORT:-8765}"
+
+echo "ZVOL Manager 安装配置开始" >> "${TRIM_TEMP_LOGFILE}"
+
+if [ ! -x "${RUNTIME_PYTHON}" ]; then
+    echo "错误：未找到 python312 运行时" >> "${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+cd "${APP_BASE}" || exit 1
+export PATH=/var/apps/python312/target/bin:$PATH
+
+python3 -m venv .venv >> "${TRIM_TEMP_LOGFILE}" 2>&1 || {
+    echo "错误：创建虚拟环境失败" >> "${TRIM_TEMP_LOGFILE}"
+    exit 1
+}
+
+. .venv/bin/activate
+pip install --upgrade pip >> "${TRIM_TEMP_LOGFILE}" 2>&1
+pip install -r requirements.txt >> "${TRIM_TEMP_LOGFILE}" 2>&1 || {
+    echo "错误：安装 Python 依赖失败" >> "${TRIM_TEMP_LOGFILE}"
+    deactivate
+    exit 1
+}
+deactivate
+
+if ! command -v targetcli >/dev/null 2>&1; then
+    echo "未检测到 targetcli，尝试自动安装 targetcli-fb" >> "${TRIM_TEMP_LOGFILE}"
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq >> "${TRIM_TEMP_LOGFILE}" 2>&1 || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends targetcli-fb >> "${TRIM_TEMP_LOGFILE}" 2>&1 || true
+    fi
+fi
+
+if [ -f /proc/modules ] && ! grep -q '^target_core_mod' /proc/modules 2>/dev/null; then
+    modprobe target_core_mod >> "${TRIM_TEMP_LOGFILE}" 2>&1 || true
+fi
+
+if [ -f "${UI_CONFIG}" ]; then
+    sed -i.tmp "s/\"port\": \"8765\"/\"port\": \"${PORT}\"/" "${UI_CONFIG}" 2>/dev/null || true
+    rm -f "${UI_CONFIG}.tmp"
+fi
+
+echo "ZVOL Manager 安装配置完成" >> "${TRIM_TEMP_LOGFILE}"
+exit 0

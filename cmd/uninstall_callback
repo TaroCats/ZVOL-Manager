@@ -1,4 +1,0 @@
-#!/bin/bash
-rm -f "${TRIM_PKGVAR}/zvol-manager.pid"
-rm -f "${TRIM_PKGVAR}/zvol-manager.log"
-exit 0

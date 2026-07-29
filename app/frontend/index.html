@@ -291,6 +291,7 @@
       border-radius: 14px;
       background: rgba(6, 12, 20, 0.6);
       border: 1px solid rgba(123, 160, 215, 0.1);
+
       color: var(--text-soft);
       font-size: 12px;
       line-height: 1.5;
@@ -931,74 +932,6 @@
           </div>
         </section>
 
-        <section class="card section-card col-12">
-          <div class="section-header">
-            <div>
-              <h2>日志</h2>
-              <p>记录接口调用、命令执行和后台任务结果，可按等级查看最近操作。</p>
-            </div>
-            <div class="section-actions">
-              <button type="button" class="secondary" @click="loadLogs" :disabled="busy">刷新日志</button>
-            </div>
-          </div>
-          <div class="filters-row">
-            <div class="field">
-              <label>日志等级</label>
-              <select v-model="logFilter.level" title="选择日志等级" @change="loadLogs">
-                <option value="">全部</option>
-                <option value="debug">debug</option>
-                <option value="info">info</option>
-                <option value="warning">warning</option>
-                <option value="error">error</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>显示数量</label>
-              <select v-model.number="logFilter.limit" title="选择日志数量" @change="loadLogs">
-                <option :value="100">100</option>
-                <option :value="200">200</option>
-                <option :value="500">500</option>
-              </select>
-            </div>
-            <div class="status-group">
-              <span class="badge badge-neutral">debug {{ logCounts.debug || 0 }}</span>
-              <span class="badge badge-success">info {{ logCounts.info || 0 }}</span>
-              <span class="badge badge-warn">warning {{ logCounts.warning || 0 }}</span>
-              <span class="badge" :class="(logCounts.error || 0) ? 'badge-warn' : 'badge-neutral'">error {{ logCounts.error || 0 }}</span>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th style="width: 18%;">时间</th>
-                  <th style="width: 12%;">等级</th>
-                  <th style="width: 14%;">类型</th>
-                  <th style="width: 56%;">内容</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="logs.length === 0">
-                  <td colspan="4" class="section-empty">暂无日志</td>
-                </tr>
-                <tr v-for="item in logs" :key="item.id">
-                  <td>{{ formatTimestamp(item.timestamp) }}</td>
-                  <td>
-                    <span class="badge" :class="logLevelClass(item.level)">{{ item.level }}</span>
-                  </td>
-                  <td>{{ item.category || '-' }}</td>
-                  <td>
-                    <div class="log-entry">
-                      <div class="log-message">{{ item.message }}</div>
-                      <pre v-if="item.details && Object.keys(item.details).length" class="log-details">{{ formatLogDetails(item.details) }}</pre>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
       </div>
 
     <div v-if="activeModal" class="modal-backdrop" @click.self="closeModal">
@@ -1503,12 +1436,6 @@
           pools: [],
           zvols: [],
           snapshotJobs: [],
-          logs: [],
-          logCounts: { debug: 0, info: 0, warning: 0, error: 0 },
-          logFilter: {
-            level: "",
-            limit: 200
-          },
           backstores: [],
           targets: [],
           activeModal: "",
@@ -1777,30 +1704,12 @@
         formatTimestamp(value) {
           return value ? value.replace("T", " ") : "-";
         },
-        logLevelClass(level) {
-          if (level === "info") return "badge-success";
-          if (level === "warning") return "badge-warn";
-          if (level === "error") return "badge-warn";
-          return "badge-neutral";
-        },
-        formatLogDetails(details) {
-          return JSON.stringify(details, null, 2);
-        },
         notifySnapshotDeleted(snapshotName, promotedClones = []) {
           if (promotedClones.length) {
             this.notifyDeleted(`快照已删除，已 promote ${promotedClones.map((item) => this.shortDatasetName(item)).join("、")}`);
             return;
           }
           this.notifyDeleted(`快照 ${this.shortSnapshotName(snapshotName)} 已删除`);
-        },
-        async loadLogs() {
-          try {
-            const result = await this.api(`/api/logs?level=${encodeURIComponent(this.logFilter.level)}&limit=${encodeURIComponent(this.logFilter.limit)}`);
-            this.logs = result.logs || [];
-            this.logCounts = result.counts || this.logCounts;
-          } catch (error) {
-            this.notify(error.message, "error");
-          }
         },
         async loadAll() {
           try {
@@ -1809,25 +1718,26 @@
               this.api("/api/pools"),
               this.api("/api/zvols"),
               this.api("/api/snapshot-jobs"),
-              this.api(`/api/logs?level=${encodeURIComponent(this.logFilter.level)}&limit=${encodeURIComponent(this.logFilter.limit)}`),
               this.api("/api/backstores"),
               this.api("/api/iscsi/targets")
             ]);
 
-            const [health, pools, zvols, snapshotJobs, logs, backstores, targets] = results;
+            const [health, pools, zvols, snapshotJobs, backstores, targets] = results;
             if (health.status === "fulfilled") this.health = health.value;
             if (pools.status === "fulfilled") this.pools = pools.value.pools || [];
             if (zvols.status === "fulfilled") this.zvols = zvols.value.zvols || [];
             if (snapshotJobs.status === "fulfilled") this.snapshotJobs = snapshotJobs.value.jobs || [];
-            if (logs.status === "fulfilled") {
-              this.logs = logs.value.logs || [];
-              this.logCounts = logs.value.counts || this.logCounts;
-            }
             if (backstores.status === "fulfilled") this.backstores = backstores.value.backstores || [];
             if (targets.status === "fulfilled") this.targets = targets.value.targets || [];
 
             if (zvols.status === "rejected") {
               this.notify(`ZVOL 列表加载失败：${zvols.reason.message}`, "error");
+            }
+            if (targets.status === "rejected") {
+              this.notify(`Target 列表加载失败：${targets.reason.message}`, "error");
+            }
+            if (backstores.status === "rejected") {
+              this.notify(`Backstore 列表加载失败：${backstores.reason.message}`, "error");
             }
             if (!this.zvolForm.pool && this.pools.length) {
               this.zvolForm.pool = this.pools[0].name;

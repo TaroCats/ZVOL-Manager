@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
 """ZVOL Manager - FastAPI 主入口"""
 
-import json
 import platform
-import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import log_utils
 from server import utils
 from server import scheduler
+
+# ---- 路径常量 ----
+ROOT_DIR = Path(__file__).resolve().parent
+FRONTEND_DIR = ROOT_DIR / "frontend"
+STATE_DIR = ROOT_DIR / "runtime"
+LOG_FILE = STATE_DIR / "operations.log"
+SNAPSHOT_JOBS_FILE = STATE_DIR / "snapshot_jobs.json"
+CONFIGFS_TARGET_ROOT = Path("/sys/kernel/config/target")
+CONFIGFS_TARGET_CORE = CONFIGFS_TARGET_ROOT / "core"
+CONFIGFS_ISCSI = CONFIGFS_TARGET_ROOT / "iscsi"
+
+APP_VERSION = "1.4.0"
+
+# ---- 提前初始化子模块（必须在其他子模块 import 之前） ----
+utils.init(CONFIGFS_TARGET_ROOT)
+
 from server.models import (
     AclChapRequest,
     AclRequest,
@@ -25,6 +38,7 @@ from server.models import (
     CreateSnapshotRequest,
     CreateZvolRequest,
     PortalRequest,
+    PushCloneRequest,
     ReverseSyncSnapshotRequest,
     SnapshotScheduleRequest,
     SyncOriginSnapshotRequest,
@@ -41,6 +55,8 @@ from server.zfs_ops import (
     get_zvol_row_by_name,
     list_zvol_rows,
     list_zvol_snapshots,
+    pull_clone_impl,
+    push_clone_impl,
     reverse_sync_impl,
     rollback_snapshot_impl,
     snapshot_dataset_name,
@@ -75,18 +91,6 @@ from server.scheduler import (
     write_snapshot_jobs,
 )
 
-# ---- 路径常量 ----
-ROOT_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = ROOT_DIR / "frontend"
-STATE_DIR = ROOT_DIR / "runtime"
-LOG_FILE = STATE_DIR / "operations.log"
-SNAPSHOT_JOBS_FILE = STATE_DIR / "snapshot_jobs.json"
-CONFIGFS_TARGET_ROOT = Path("/sys/kernel/config/target")
-CONFIGFS_TARGET_CORE = CONFIGFS_TARGET_ROOT / "core"
-CONFIGFS_ISCSI = CONFIGFS_TARGET_ROOT / "iscsi"
-
-APP_VERSION = "1.4.0"
-
 ARTICLE_PROFILE = {
     "pool_recommended": {
         "ashift": "12",
@@ -120,8 +124,6 @@ ARTICLE_PROFILE = {
 }
 
 # ---- 初始化子模块 ----
-log_utils.init(LOG_FILE, STATE_DIR)
-utils.init(CONFIGFS_TARGET_ROOT)
 scheduler.init(SNAPSHOT_JOBS_FILE)
 
 # ---- FastAPI App ----
@@ -134,55 +136,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
-
-
-# ---- 中间件 ----
-@app.middleware("http")
-async def access_log_middleware(request: Request, call_next):
-    start = time.perf_counter()
-    try:
-        response = await call_next(request)
-    except Exception as exc:
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        if not request.url.path.startswith("/assets"):
-            detail = getattr(exc, "detail", str(exc))
-            log_utils.append_log("error", "api", f"{request.method} {request.url.path}", {
-                "status_code": getattr(exc, "status_code", 500),
-                "duration_ms": duration_ms,
-                "query": str(request.url.query),
-                "error": str(exc),
-                "detail": detail,
-            })
-        raise
-
-    duration_ms = int((time.perf_counter() - start) * 1000)
-    if request.url.path not in {"/api/logs"} and not request.url.path.startswith("/assets"):
-        status_code = response.status_code
-        if status_code >= 500:
-            level = "error"
-        elif status_code >= 400:
-            level = "warning"
-        elif request.method.upper() == "GET":
-            level = "debug"
-        else:
-            level = "info"
-
-        body_detail = ""
-        if hasattr(response, "body") and response.body:
-            try:
-                body_data = json.loads(response.body.decode("utf-8"))
-                if isinstance(body_data, dict):
-                    body_detail = body_data.get("message") or body_data.get("detail") or ""
-            except (json.JSONDecodeError, TypeError, UnicodeDecodeError, AttributeError):
-                pass
-
-        log_utils.append_log(level, "api", f"{request.method} {request.url.path}", {
-            "status_code": status_code,
-            "duration_ms": duration_ms,
-            "query": str(request.url.query),
-            "detail": body_detail,
-        })
-    return response
 
 
 # ---- 辅助函数 ----
@@ -220,7 +173,6 @@ def get_health():
         "backstore_count": len(read_backstores()) if CONFIGFS_TARGET_CORE.exists() else 0,
         "target_count": len(read_iscsi_targets()) if CONFIGFS_ISCSI.exists() else 0,
         "snapshot_job_count": len(read_snapshot_jobs()),
-        "log_counts": log_utils.summarize_log_counts(),
     }
 
 
@@ -348,6 +300,20 @@ def clone_zvol(payload: CloneZvolRequest):
     return clone_zvol_impl(payload.snapshot_name, pool, parent_dataset, name)
 
 
+@app.post("/api/zvols/clones/{clone_name:path}/push")
+def push_clone(clone_name: str, payload: PushCloneRequest):
+    """将 clone 上的改动增量回合到 origin"""
+    ensure_supported_runtime()
+    return push_clone_impl(clone_name, payload.ver_label)
+
+
+@app.post("/api/zvols/clones/{clone_name:path}/pull")
+def pull_clone(clone_name: str):
+    """将 origin 最新状态同步到 clone，保留 clone 自身改动"""
+    ensure_supported_runtime()
+    return pull_clone_impl(clone_name)
+
+
 # ---- 定时快照任务 ----
 
 @app.get("/api/snapshot-jobs")
@@ -364,12 +330,6 @@ def create_snapshot_job(payload: SnapshotScheduleRequest):
     ensure_unique_snapshot_job(job, jobs)
     jobs.append(job)
     scheduler.write_snapshot_jobs(jobs)
-    log_utils.append_log("info", "scheduler", "创建定时快照任务", {
-        "object_type": "Job", "object_name": job["id"],
-        "action": "create", "result": "success",
-        "zvol_name": job["zvol_name"], "prefix": job["prefix"],
-        "interval_minutes": job["interval_minutes"], "keep_count": job["keep_count"],
-    })
     return {"message": "定时快照任务创建成功", "job": build_snapshot_job_view(job)}
 
 
@@ -391,10 +351,6 @@ def update_snapshot_job(job_id: str, payload: SnapshotScheduleRequest):
     if not updated_job:
         raise HTTPException(status_code=404, detail="定时快照任务不存在")
     scheduler.write_snapshot_jobs(jobs)
-    log_utils.append_log("info", "scheduler", "更新定时快照任务", {
-        "object_type": "Job", "object_name": job_id,
-        "action": "update", "result": "success",
-    })
     return {"message": "定时快照任务已更新", "job": build_snapshot_job_view(updated_job)}
 
 
@@ -406,25 +362,7 @@ def delete_snapshot_job(job_id: str):
     if len(remaining) == len(jobs):
         raise HTTPException(status_code=404, detail="定时快照任务不存在")
     scheduler.write_snapshot_jobs(remaining)
-    log_utils.append_log("info", "scheduler", "删除定时快照任务", {
-        "object_type": "Job", "object_name": job_id,
-        "action": "delete", "result": "success",
-    })
     return {"message": "定时快照任务已删除", "job_id": job_id}
-
-
-# ---- 日志 ----
-
-@app.get("/api/logs")
-def list_logs(
-    level: str = Query(default=""),
-    limit: int = Query(default=200, ge=1, le=1000),
-):
-    return {
-        "logs": log_utils.read_logs(level=level, limit=limit),
-        "counts": log_utils.summarize_log_counts(),
-        "levels": ["debug", "info", "warning", "error"],
-    }
 
 
 # ---- Backstore ----

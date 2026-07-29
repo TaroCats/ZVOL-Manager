@@ -9,7 +9,6 @@ from typing import Optional
 
 from fastapi import HTTPException
 
-from server.log_utils import append_log
 from server.utils import (
     normalize_zvol_name,
     normalize_schedule_prefix,
@@ -124,11 +123,6 @@ def run_snapshot_job(job_id: str) -> dict:
     job = get_snapshot_job(job_id)
     suffix = datetime.now().strftime(SCHEDULE_TIMESTAMP_FORMAT)
     snapshot_short_name = f"{job['prefix']}-{suffix}"
-    append_log("info", "scheduler", "执行定时快照任务", {
-        "object_type": "Job", "object_name": job_id,
-        "action": "execute", "result": "running",
-        "zvol_name": job["zvol_name"], "prefix": job["prefix"],
-    })
     snapshot_result = create_snapshot_impl(job["zvol_name"], snapshot_short_name)
     prune_result = prune_scheduled_snapshots(job["zvol_name"], job["prefix"], int(job["keep_count"]))
 
@@ -148,13 +142,6 @@ def run_snapshot_job(job_id: str) -> dict:
         updated_jobs.append(current)
         job = current
     write_snapshot_jobs(updated_jobs)
-    append_log("info" if not prune_result["skipped"] else "warning", "scheduler", "定时快照任务完成", {
-        "object_type": "Job", "object_name": job_id,
-        "action": "execute", "result": "success" if not prune_result["skipped"] else "partial",
-        "snapshot_name": snapshot_result["snapshot_name"],
-        "pruned": prune_result["pruned"],
-        "skipped": prune_result["skipped"],
-    })
     return build_snapshot_job_view(job)
 
 
@@ -175,11 +162,6 @@ def snapshot_jobs_loop() -> None:
                     try:
                         run_snapshot_job(job["id"])
                     except Exception as exc:
-                        append_log("error", "scheduler", "定时快照任务失败", {
-                            "object_type": "Job", "object_name": job["id"],
-                            "action": "execute", "result": "failure",
-                            "error": str(exc),
-                        })
                         # 重新读取任务列表避免竞态条件
                         updated_jobs = read_snapshot_jobs()
                         for current in updated_jobs:
@@ -189,9 +171,7 @@ def snapshot_jobs_loop() -> None:
                                 current["last_run_at"] = now_iso()
                         write_snapshot_jobs(updated_jobs)
         except Exception as exc:
-            append_log("error", "scheduler", "定时快照循环异常", {
-                "action": "loop", "result": "failure", "error": str(exc),
-            })
+            pass
         time.sleep(SCHEDULE_LOOP_INTERVAL)
 
 

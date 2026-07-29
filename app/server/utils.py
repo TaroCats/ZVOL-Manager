@@ -10,8 +10,6 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 
-from server.log_utils import append_log
-
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.:+-]+$")
 SAFE_DATASET_RE = re.compile(r"^[A-Za-z0-9_.:+/-]+$")
 SAFE_SNAPSHOT_RE = re.compile(r"^[A-Za-z0-9_.:+/-]+@[A-Za-z0-9_.:+-]+$")
@@ -39,20 +37,15 @@ def ensure_supported_runtime() -> None:
 
 
 def run_cmd(cmd: list[str], timeout: int = 30) -> str:
-    append_log("debug", "command", "执行命令", {"command": cmd, "timeout": timeout})
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
-        append_log("error", "command", "命令不存在", {"command": cmd})
         raise HTTPException(status_code=500, detail=f"命令不存在：{cmd[0]}")
     except subprocess.TimeoutExpired:
-        append_log("error", "command", "命令执行超时", {"command": cmd, "timeout": timeout})
         raise HTTPException(status_code=500, detail=f"命令超时：{' '.join(cmd)}")
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip() or "命令执行失败"
-        append_log("error", "command", "命令执行失败", {"command": cmd, "detail": detail, "returncode": result.returncode})
         raise HTTPException(status_code=500, detail=detail)
-    append_log("debug", "command", "命令执行成功", {"command": cmd})
     return result.stdout.strip()
 
 

@@ -6,7 +6,6 @@ from typing import Optional
 
 from fastapi import HTTPException
 
-from server.log_utils import append_log
 from server.utils import (
     CONFIGFS_TARGET_ROOT,
     CONFIGFS_TARGET_CORE,
@@ -27,25 +26,28 @@ def read_backstores() -> list[dict]:
     backstores: list[dict] = []
     if not CONFIGFS_TARGET_CORE or not CONFIGFS_TARGET_CORE.exists():
         return backstores
-    for iblock_dir in sorted(CONFIGFS_TARGET_CORE.glob("iblock_*")):
-        if not iblock_dir.is_dir():
-            continue
-        for entry in sorted(iblock_dir.iterdir()):
-            if not entry.is_dir():
+    try:
+        for iblock_dir in sorted(CONFIGFS_TARGET_CORE.glob("iblock_*")):
+            if not iblock_dir.is_dir():
                 continue
-            device = read_text_if_exists(entry / "udev_path")
-            enabled = read_text_if_exists(entry / "enable") == "1"
-            serial = read_text_if_exists(entry / "wwn" / "vpd_unit_serial")
-            zvol_name = device.replace("/dev/zvol/", "", 1) if device.startswith("/dev/zvol/") else ""
-            backstores.append({
-                "name": entry.name,
-                "device": device,
-                "enabled": enabled,
-                "serial": serial,
-                "zvol_name": zvol_name,
-                "iblock_path": str(entry),
-                "iblock_group": iblock_dir.name,
-            })
+            for entry in sorted(iblock_dir.iterdir()):
+                if not entry.is_dir():
+                    continue
+                device = read_text_if_exists(entry / "udev_path")
+                enabled = read_text_if_exists(entry / "enable") == "1"
+                serial = read_text_if_exists(entry / "wwn" / "vpd_unit_serial")
+                zvol_name = device.replace("/dev/zvol/", "", 1) if device.startswith("/dev/zvol/") else ""
+                backstores.append({
+                    "name": entry.name,
+                    "device": device,
+                    "enabled": enabled,
+                    "serial": serial,
+                    "zvol_name": zvol_name,
+                    "iblock_path": str(entry),
+                    "iblock_group": iblock_dir.name,
+                })
+    except Exception:
+        pass
     return backstores
 
 
@@ -74,11 +76,6 @@ def create_backstore_impl(zvol_name: str, backstore_name: str) -> dict:
     if not created:
         raise HTTPException(status_code=500, detail="Backstore 创建命令已执行，但未在 configfs 中找到结果")
     targetcli_saveconfig()
-    append_log("info", "iscsi", "创建 Backstore", {
-        "object_type": "Backstore", "object_name": backstore_name,
-        "action": "create", "result": "success",
-        "zvol_name": zvol_name,
-    })
     return created
 
 
@@ -91,10 +88,6 @@ def delete_backstore_impl(name: str) -> dict:
     if get_backstore(name):
         raise HTTPException(status_code=500, detail="Backstore 删除后重新扫描仍存在，请到 fnOS 上进一步排查")
     targetcli_saveconfig()
-    append_log("info", "iscsi", "删除 Backstore", {
-        "object_type": "Backstore", "object_name": name,
-        "action": "delete", "result": "success",
-    })
     return {"message": "Backstore 删除成功", "backstore_name": name}
 
 
@@ -197,60 +190,70 @@ def read_iscsi_targets() -> list[dict]:
     targets: list[dict] = []
     if not CONFIGFS_ISCSI or not CONFIGFS_ISCSI.exists():
         return targets
-    backstores_by_name = {item["name"]: item for item in read_backstores()}
-    for iqn_dir in sorted(CONFIGFS_ISCSI.iterdir()):
+    try:
+        backstores_by_name = {item["name"]: item for item in read_backstores()}
+    except Exception:
+        backstores_by_name = {}
+    try:
+        iqn_dirs = sorted(CONFIGFS_ISCSI.iterdir())
+    except Exception:
+        return targets
+    for iqn_dir in iqn_dirs:
         if not iqn_dir.is_dir():
             continue
         if iqn_dir.name in RESERVED_ISCSI_NAMES:
             continue
-        tpg_items = []
-        used_backstores: set[str] = set()
-        target_portals: set[str] = set()
-        target_acls: list[dict] = []
-        for tpg_dir in iter_tpg_dirs(iqn_dir):
-            lun_items = []
-            portals: list[dict] = []
-            acl_items: list[dict] = []
-            for lun_dir in iter_lun_dirs(tpg_dir):
-                linked_backstores = read_lun_backstores(lun_dir)
-                used_backstores.update(linked_backstores)
-                lun_items.append({"name": lun_dir.name, "backstores": linked_backstores})
-            np_dir = tpg_dir / "np"
-            if np_dir.exists():
-                for portal_dir in sorted(np_dir.iterdir()):
-                    if portal_dir.is_dir():
-                        portal = parse_portal_name(portal_dir.name)
-                        portals.append(portal)
-                        target_portals.add(portal["value"])
-            acl_dir = tpg_dir / "acls"
-            if acl_dir.exists():
-                for acl_item in sorted(acl_dir.iterdir()):
-                    if acl_item.is_dir():
-                        acl_info = read_acl_entry(acl_item)
-                        acl_items.append(acl_info)
-                        target_acls.append(acl_info)
-            tpg_items.append({
-                "name": tpg_dir.name,
-                "luns": lun_items,
-                "portals": portals,
-                "acls": acl_items,
-                "settings": read_tpg_settings(iqn_dir.name, tpg_dir),
+        try:
+            tpg_items = []
+            used_backstores: set[str] = set()
+            target_portals: set[str] = set()
+            target_acls: list[dict] = []
+            for tpg_dir in iter_tpg_dirs(iqn_dir):
+                lun_items = []
+                portals: list[dict] = []
+                acl_items: list[dict] = []
+                for lun_dir in iter_lun_dirs(tpg_dir):
+                    linked_backstores = read_lun_backstores(lun_dir)
+                    used_backstores.update(linked_backstores)
+                    lun_items.append({"name": lun_dir.name, "backstores": linked_backstores})
+                np_dir = tpg_dir / "np"
+                if np_dir.exists():
+                    for portal_dir in sorted(np_dir.iterdir()):
+                        if portal_dir.is_dir():
+                            portal = parse_portal_name(portal_dir.name)
+                            portals.append(portal)
+                            target_portals.add(portal["value"])
+                acl_dir = tpg_dir / "acls"
+                if acl_dir.exists():
+                    for acl_item in sorted(acl_dir.iterdir()):
+                        if acl_item.is_dir():
+                            acl_info = read_acl_entry(acl_item)
+                            acl_items.append(acl_info)
+                            target_acls.append(acl_info)
+                tpg_items.append({
+                    "name": tpg_dir.name,
+                    "luns": lun_items,
+                    "portals": portals,
+                    "acls": acl_items,
+                    "settings": read_tpg_settings(iqn_dir.name, tpg_dir),
+                })
+            zvol_names = []
+            for backstore_name in sorted(used_backstores):
+                backstore = backstores_by_name.get(backstore_name)
+                if backstore and backstore["zvol_name"]:
+                    zvol_names.append(backstore["zvol_name"])
+            targets.append({
+                "iqn": iqn_dir.name,
+                "tpgs": tpg_items,
+                "backstores": sorted(used_backstores),
+                "zvol_names": zvol_names,
+                "portals": sorted(target_portals),
+                "acl_names": [item["initiator_iqn"] for item in target_acls],
+                "acls": target_acls,
+                "settings": tpg_items[0]["settings"] if tpg_items else None,
             })
-        zvol_names = []
-        for backstore_name in sorted(used_backstores):
-            backstore = backstores_by_name.get(backstore_name)
-            if backstore and backstore["zvol_name"]:
-                zvol_names.append(backstore["zvol_name"])
-        targets.append({
-            "iqn": iqn_dir.name,
-            "tpgs": tpg_items,
-            "backstores": sorted(used_backstores),
-            "zvol_names": zvol_names,
-            "portals": sorted(target_portals),
-            "acl_names": [item["initiator_iqn"] for item in target_acls],
-            "acls": target_acls,
-            "settings": tpg_items[0]["settings"] if tpg_items else None,
-        })
+        except Exception:
+            continue
     return targets
 
 
@@ -274,10 +277,6 @@ def create_iscsi_target_impl(iqn: str, tpg: int) -> dict:
     if not target:
         raise HTTPException(status_code=500, detail="Target 创建命令已执行，但未在 configfs 中找到结果")
     targetcli_saveconfig()
-    append_log("info", "iscsi", "创建 Target", {
-        "object_type": "Target", "object_name": iqn,
-        "action": "create", "result": "success",
-    })
     return {"message": "iSCSI Target 创建成功", "target": target}
 
 
@@ -297,11 +296,6 @@ def delete_iscsi_target_impl(iqn: str, delete_backstore: bool) -> dict:
                 if not get_backstore(backstore_name):
                     deleted_backstores.append(backstore_name)
     targetcli_saveconfig()
-    append_log("info", "iscsi", "删除 Target", {
-        "object_type": "Target", "object_name": iqn,
-        "action": "delete", "result": "success",
-        "deleted_backstores": deleted_backstores,
-    })
     return {"message": "iSCSI Target 删除成功", "iqn": iqn, "deleted_backstores": deleted_backstores}
 
 
@@ -319,11 +313,6 @@ def create_iscsi_lun_impl(iqn: str, backstore_name: str, tpg: int) -> dict:
     updated_target = get_target(iqn)
     if not updated_target or backstore_name not in updated_target["backstores"]:
         raise HTTPException(status_code=500, detail="LUN 创建命令已执行，但重新扫描 target 状态时未发现该 backstore")
-    append_log("info", "iscsi", "创建 LUN", {
-        "object_type": "LUN", "object_name": f"{iqn}/{backstore_name}",
-        "action": "create", "result": "success",
-        "target_iqn": iqn, "backstore_name": backstore_name,
-    })
     return {"message": "LUN 创建成功", "target": updated_target, "backstore_name": backstore_name}
 
 
@@ -347,10 +336,6 @@ def update_target_settings_impl(iqn: str, payload: "TargetSettingsRequest") -> d
         run_cmd(["targetcli", tpg_path, "set", "auth", *auth_updates], timeout=120)
     targetcli_saveconfig()
     tpg_dir = resolve_tpg_dir(iqn, payload.tpg)
-    append_log("info", "iscsi", "更新 Target 设置", {
-        "object_type": "Target", "object_name": iqn,
-        "action": "update_settings", "result": "success",
-    })
     return {"message": "Target 设置已更新", "settings": read_tpg_settings(iqn, tpg_dir)}
 
 
@@ -358,11 +343,6 @@ def add_portal_impl(iqn: str, ip: str, port: int, tpg: int) -> dict:
     tpg_path = targetcli_tpg_path(iqn, tpg)
     run_cmd(["targetcli", f"{tpg_path}/portals", "create", ip.strip(), str(port)], timeout=120)
     targetcli_saveconfig()
-    append_log("info", "iscsi", "添加 Portal", {
-        "object_type": "Portal", "object_name": f"{ip}:{port}",
-        "action": "create", "result": "success",
-        "target_iqn": iqn,
-    })
     return {"message": "Portal 创建成功", "target": get_target(iqn)}
 
 
@@ -370,11 +350,6 @@ def delete_portal_impl(iqn: str, ip: str, port: int, tpg: int) -> dict:
     tpg_path = targetcli_tpg_path(iqn, tpg)
     run_cmd(["targetcli", f"{tpg_path}/portals", "delete", ip.strip(), str(port)], timeout=120)
     targetcli_saveconfig()
-    append_log("info", "iscsi", "删除 Portal", {
-        "object_type": "Portal", "object_name": f"{ip}:{port}",
-        "action": "delete", "result": "success",
-        "target_iqn": iqn,
-    })
     return {"message": "Portal 删除成功", "target": get_target(iqn)}
 
 
@@ -382,11 +357,6 @@ def add_acl_impl(iqn: str, initiator_iqn: str, tpg: int) -> dict:
     tpg_path = targetcli_tpg_path(iqn, tpg)
     run_cmd(["targetcli", f"{tpg_path}/acls", "create", initiator_iqn], timeout=120)
     targetcli_saveconfig()
-    append_log("info", "iscsi", "添加 ACL", {
-        "object_type": "ACL", "object_name": initiator_iqn,
-        "action": "create", "result": "success",
-        "target_iqn": iqn,
-    })
     return {"message": "ACL 创建成功", "target": get_target(iqn)}
 
 
@@ -394,11 +364,6 @@ def delete_acl_impl(iqn: str, initiator_iqn: str, tpg: int) -> dict:
     tpg_path = targetcli_tpg_path(iqn, tpg)
     run_cmd(["targetcli", f"{tpg_path}/acls", "delete", initiator_iqn], timeout=120)
     targetcli_saveconfig()
-    append_log("info", "iscsi", "删除 ACL", {
-        "object_type": "ACL", "object_name": initiator_iqn,
-        "action": "delete", "result": "success",
-        "target_iqn": iqn,
-    })
     return {"message": "ACL 删除成功", "target": get_target(iqn)}
 
 
@@ -412,9 +377,4 @@ def update_acl_chap_impl(iqn: str, initiator_iqn: str, payload: "AclChapRequest"
         auth_updates.append(f"mutual_password={payload.mutual_password}")
     run_cmd(["targetcli", f"{tpg_path}/acls/{initiator_iqn}", "set", "auth", *auth_updates], timeout=120)
     targetcli_saveconfig()
-    append_log("info", "iscsi", "更新 ACL CHAP", {
-        "object_type": "ACL", "object_name": initiator_iqn,
-        "action": "update_chap", "result": "success",
-        "target_iqn": iqn,
-    })
     return {"message": "ACL CHAP 已更新", "target": get_target(iqn)}

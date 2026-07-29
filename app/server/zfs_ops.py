@@ -1,11 +1,11 @@
 """ZFS 操作：ZVOL、快照、克隆、send/recv"""
 
 import subprocess
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
 
-from server.log_utils import append_log
 from server.utils import (
     normalize_snapshot_name,
     normalize_zvol_name,
@@ -131,11 +131,6 @@ def create_zvol_impl(pool: str, name: str, parent_dataset: str, size: str,
         args.insert(2, "-s")
     run_cmd(args, timeout=120)
 
-    append_log("info", "zfs", "创建 ZVOL", {
-        "object_type": "ZVOL", "object_name": full_name,
-        "action": "create", "result": "success",
-        "size": size, "sparse": sparse,
-    })
     return {
         "message": "ZVOL 创建成功",
         "zvol_name": full_name,
@@ -144,11 +139,25 @@ def create_zvol_impl(pool: str, name: str, parent_dataset: str, size: str,
 
 
 def delete_zvol_impl(full_name: str) -> dict:
-    run_cmd(["zfs", "destroy", "-r", full_name], timeout=120)
-    append_log("info", "zfs", "删除 ZVOL", {
-        "object_type": "ZVOL", "object_name": full_name,
-        "action": "delete", "result": "success",
-    })
+    # 如果该 ZVOL 是 clone，先 promote 断开与 origin 的依赖
+    row = get_zvol_row_by_name(full_name)
+    if row.get("origin") and row["origin"] != "-":
+        run_cmd(["zfs", "promote", full_name], timeout=120)
+
+    # 查找依赖该 ZVOL 快照的其他 clone，先 promote 它们
+    dependent_clones = [
+        r["name"] for r in list_zvol_rows()
+        if r.get("origin") and r["origin"] != "-"
+        and r["origin"].startswith(f"{full_name}@")
+    ]
+    for clone_name in dependent_clones:
+        run_cmd(["zfs", "promote", clone_name], timeout=120)
+
+    # 先尝试正常删除，失败则强制删除
+    result = run_result(["zfs", "destroy", "-r", full_name], timeout=120)
+    if result.returncode != 0:
+        # 尝试强制删除
+        run_cmd(["zfs", "destroy", "-r", "-f", full_name], timeout=120)
     return {"message": "ZVOL 删除成功", "zvol_name": full_name}
 
 
@@ -157,11 +166,6 @@ def create_snapshot_impl(zvol_name: str, snapshot_short_name: str) -> dict:
     short_name = require_safe_name(snapshot_short_name, "快照名称")
     full_snapshot_name = f"{full_name}@{short_name}"
     run_cmd(["zfs", "snapshot", full_snapshot_name], timeout=120)
-    append_log("info", "zfs", "创建快照", {
-        "object_type": "Snapshot", "object_name": full_snapshot_name,
-        "action": "create", "result": "success",
-        "zvol_name": full_name,
-    })
     return {"message": "ZVOL 快照创建成功", "zvol_name": full_name, "snapshot_name": full_snapshot_name}
 
 
@@ -175,11 +179,6 @@ def destroy_snapshot_impl(snapshot_name: str, promote_dependent_clones: bool = T
         run_cmd(["zfs", "promote", clone_name], timeout=120)
         promoted_clones.append(clone_name)
     run_cmd(["zfs", "destroy", full_snapshot_name], timeout=120)
-    append_log("info", "zfs", "删除快照", {
-        "object_type": "Snapshot", "object_name": full_snapshot_name,
-        "action": "delete", "result": "success",
-        "promoted_clones": promoted_clones,
-    })
     return {"snapshot_name": full_snapshot_name, "promoted_clones": promoted_clones, "skipped_clones": []}
 
 
@@ -187,11 +186,6 @@ def rollback_snapshot_impl(snapshot_name: str) -> dict:
     full_snapshot_name = normalize_snapshot_name(snapshot_name, "快照名称")
     run_cmd(["zfs", "rollback", "-r", full_snapshot_name], timeout=120)
     zvol_name = snapshot_dataset_name(full_snapshot_name)
-    append_log("info", "zfs", "回滚快照", {
-        "object_type": "Snapshot", "object_name": full_snapshot_name,
-        "action": "rollback", "result": "success",
-        "zvol_name": zvol_name,
-    })
     return {"message": "ZVOL 快照回滚成功", "snapshot_name": full_snapshot_name, "zvol_name": zvol_name}
 
 
@@ -201,11 +195,6 @@ def clone_zvol_impl(source_snapshot: str, pool: str, parent_dataset: str, clone_
     target_name = f"{target_parent}/{clone_name}"
     ensure_parent_dataset(target_parent)
     run_cmd(["zfs", "clone", full_snapshot, target_name], timeout=120)
-    append_log("info", "zfs", "克隆 ZVOL", {
-        "object_type": "Clone", "object_name": target_name,
-        "action": "clone", "result": "success",
-        "source_snapshot": full_snapshot,
-    })
     return {"message": "ZVOL 克隆创建成功", "source_snapshot": full_snapshot, "zvol_name": target_name, "device": zvol_device_path(target_name)}
 
 
@@ -297,13 +286,6 @@ def reverse_sync_impl(snapshot_name: str, base_snapshot: Optional[str]) -> dict:
 
     pipe_zfs_send_receive(base, full_snapshot_name, target_dataset)
 
-    append_log("info", "zfs", "反向同步", {
-        "object_type": "Snapshot", "object_name": full_snapshot_name,
-        "action": "reverse_sync", "result": "success",
-        "source_dataset": source_dataset,
-        "target_dataset": target_dataset,
-        "base_snapshot": base,
-    })
     return {"message": "增量反向同步成功", "base_snapshot": base, "source_snapshot": full_snapshot_name, "target_dataset": target_dataset}
 
 
@@ -319,6 +301,221 @@ def build_clone_sync_target(source_dataset: str, clone_row: dict, source_snapsho
         "source_snapshot": source_snapshot,
         "target_dataset": target_dataset,
         "status": "success",
+    }
+
+
+def push_clone_impl(clone_name: str, ver_label: Optional[str] = None) -> dict:
+    """
+    将 clone 上的改动增量回合到 origin（对应 zvol-sync.sh 的 push 命令）。
+
+    流程:
+    1. 验证 clone 存在且有 origin
+    2. 检查 origin 自 clone 创建后是否有新快照 → 有则先自动 pull 合并
+    3. 对 clone 打快照
+    4. zfs send -i <origin_snap> <clone@snap> | zfs recv -F <origin>
+    5. 给 origin 打版本标签快照
+    6. 重建 clone 使其 origin 指向最新 origin 快照
+    """
+    full_clone_name = normalize_zvol_name(clone_name)
+    clone_row = get_zvol_row_by_name(full_clone_name)
+    origin_snapshot = clone_row.get("origin") or "-"
+    if origin_snapshot == "-":
+        raise HTTPException(status_code=409, detail="当前 ZVOL 不是 clone，无法执行 push")
+
+    origin_dataset = snapshot_dataset_name(origin_snapshot)
+    get_zvol_row_by_name(origin_dataset)  # 确保 origin 存在
+
+    label = ver_label or f"sync-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    snap_name = f"push-{label}"
+
+    # 检查 origin 自 clone 创建后是否有新快照
+    origin_snapshots = list_dataset_snapshots(origin_dataset)
+    origin_snap_names = [s["name"] for s in origin_snapshots if not s["name"].endswith("@base")]
+    latest_origin_snap = origin_snap_names[-1] if origin_snap_names else ""
+
+    if latest_origin_snap and latest_origin_snap != origin_snapshot:
+        # origin 有新快照，先自动 pull 合并
+        _pull_clone_internal(full_clone_name, origin_snapshot, latest_origin_snap)
+        origin_snapshot = latest_origin_snap
+
+    # 对 clone 打快照
+    clone_snap = f"{full_clone_name}@{snap_name}"
+    run_cmd(["zfs", "snapshot", clone_snap], timeout=120)
+
+    # 增量 send 回 origin
+    pipe_zfs_send_receive(origin_snapshot, clone_snap, origin_dataset)
+
+    # 给 origin 打版本标签快照
+    origin_label_snap = f"{origin_dataset}@{label}"
+    run_cmd(["zfs", "snapshot", origin_label_snap], timeout=120)
+
+    # 重建 clone 使其 origin 指向最新 origin 快照
+    run_cmd(["zfs", "destroy", "-r", full_clone_name], timeout=120)
+    run_cmd(["zfs", "clone", origin_label_snap, full_clone_name], timeout=120)
+
+    return {
+        "message": "克隆盘改动已增量回合到 origin",
+        "clone_name": full_clone_name,
+        "origin_dataset": origin_dataset,
+        "snapshot": clone_snap,
+        "label": label,
+    }
+
+
+def _pull_clone_internal(clone_name: str, origin_snapshot: str, latest_origin_snap: str) -> None:
+    """
+    内部函数：将 origin 最新状态同步到 clone，保留 clone 自身改动。
+    供 push 内部自动调用，也可被 cmd_pull 复用。
+    """
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    ver_label = f"autopull-{timestamp}"
+    diff_file = None
+
+    # 保存 clone 自身改动（相对于 origin_snapshot 的增量）
+    before_snap = f"{clone_name}@before-pull-{ver_label}"
+    run_cmd(["zfs", "snapshot", before_snap], timeout=120)
+
+    has_diff = False
+    diff_result = run_result(
+        ["zfs", "send", "-i", origin_snapshot, before_snap],
+        timeout=300,
+    )
+    if diff_result.returncode == 0 and diff_result.stdout:
+        has_diff = True
+        diff_file = diff_result.stdout
+    elif diff_result.returncode != 0:
+        # 无增量时 send -i 可能返回非零，忽略
+        pass
+
+    # 重建 clone：基于最新 origin 快照
+    run_cmd(["zfs", "destroy", "-r", clone_name], timeout=120)
+    run_cmd(["zfs", "clone", latest_origin_snap, clone_name], timeout=120)
+
+    # 回灌 clone 自身改动
+    if has_diff and diff_file:
+        try:
+            _pipe_zfs_receive_from_bytes(clone_name, diff_file.encode("utf-8"))
+        except HTTPException:
+            # 回灌失败时保留 clone 的 origin 最新状态
+            pass
+
+    # 清理临时快照
+    run_result(["zfs", "destroy", before_snap], timeout=30)
+
+
+def _pipe_zfs_receive_from_bytes(target_dataset: str, data: bytes) -> None:
+    """将字节数据通过 zfs recv 管道写入目标 dataset"""
+    recv_proc = subprocess.Popen(
+        ["zfs", "receive", "-F", target_dataset],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=False,
+    )
+    if recv_proc.stdin is None:
+        recv_proc.kill()
+        recv_proc.wait()
+        raise HTTPException(status_code=500, detail="无法建立 zfs recv 管道")
+
+    try:
+        recv_proc.stdin.write(data)
+        recv_proc.stdin.close()
+        recv_stderr = recv_proc.stderr.read() if recv_proc.stderr is not None else b""
+        recv_code = recv_proc.wait()
+    except Exception:
+        recv_proc.kill()
+        recv_proc.wait()
+        raise
+
+    if recv_code != 0:
+        detail = recv_stderr.decode("utf-8", errors="ignore").strip() or "zfs receive 执行失败"
+        raise HTTPException(status_code=500, detail=detail)
+
+
+def pull_clone_impl(clone_name: str) -> dict:
+    """
+    将 origin 最新状态同步到 clone，保留 clone 自身改动（对应 zvol-sync.sh 的 pull 命令）。
+
+    流程:
+    1. 验证 clone 存在且有 origin
+    2. 获取 origin 最新快照
+    3. 如果已是最新，跳过
+    4. 保存 clone 自身改动 → 重建 clone → 回灌
+    """
+    full_clone_name = normalize_zvol_name(clone_name)
+    clone_row = get_zvol_row_by_name(full_clone_name)
+    origin_snapshot = clone_row.get("origin") or "-"
+    if origin_snapshot == "-":
+        raise HTTPException(status_code=409, detail="当前 ZVOL 不是 clone，无法执行 pull")
+
+    origin_dataset = snapshot_dataset_name(origin_snapshot)
+    get_zvol_row_by_name(origin_dataset)
+
+    # 找到 origin 上最新的快照（排除 @base）
+    origin_snapshots = list_dataset_snapshots(origin_dataset)
+    origin_snap_names = [s["name"] for s in origin_snapshots if not s["name"].endswith("@base")]
+    latest_origin_snap = origin_snap_names[-1] if origin_snap_names else ""
+
+    if not latest_origin_snap:
+        return {
+            "message": "origin 上没有除 @base 之外的快照，无需 pull",
+            "clone_name": full_clone_name,
+            "origin_dataset": origin_dataset,
+        }
+
+    if latest_origin_snap == origin_snapshot:
+        return {
+            "message": f"clone 已基于最新 origin 快照 ({origin_snapshot})，无需 pull",
+            "clone_name": full_clone_name,
+            "origin_dataset": origin_dataset,
+            "origin_snapshot": origin_snapshot,
+        }
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    ver_label = f"pull-{timestamp}"
+    diff_file = None
+
+    # 保存 clone 自身改动
+    before_snap = f"{full_clone_name}@before-pull-{ver_label}"
+    run_cmd(["zfs", "snapshot", before_snap], timeout=120)
+
+    has_diff = False
+    diff_result = run_result(
+        ["zfs", "send", "-i", origin_snapshot, before_snap],
+        timeout=300,
+    )
+    if diff_result.returncode == 0 and diff_result.stdout:
+        has_diff = True
+        diff_file = diff_result.stdout
+    elif diff_result.returncode != 0:
+        pass
+
+    # 重建 clone
+    run_cmd(["zfs", "destroy", "-r", full_clone_name], timeout=120)
+    run_cmd(["zfs", "clone", latest_origin_snap, full_clone_name], timeout=120)
+
+    # 回灌自身改动
+    rebased = False
+    if has_diff and diff_file:
+        try:
+            _pipe_zfs_receive_from_bytes(full_clone_name, diff_file.encode("utf-8"))
+            rebased = True
+        except HTTPException:
+            rebased = False
+
+    # 清理临时快照
+    run_result(["zfs", "destroy", before_snap], timeout=30)
+
+    msg = f"clone 已从 {origin_snapshot} 更新至 {latest_origin_snap}"
+    if has_diff and rebased:
+        msg += "，自身改动已保留"
+    elif has_diff and not rebased:
+        msg += "，自身改动回灌失败（clone 仅包含 origin 最新状态）"
+
+    return {
+        "message": msg,
+        "clone_name": full_clone_name,
+        "origin_dataset": origin_dataset,
+        "from_snapshot": origin_snapshot,
+        "to_snapshot": latest_origin_snap,
+        "clone_changes_retained": rebased,
     }
 
 
@@ -346,13 +543,6 @@ def sync_origin_to_clones_impl(snapshot_name: str, requested_clone_names: set[st
         except HTTPException as exc:
             failures.append({"clone_name": clone_row["name"], "status": "failed", "detail": exc.detail})
 
-    append_log("info", "zfs", "同步到 clone", {
-        "object_type": "Snapshot", "object_name": source_snapshot,
-        "action": "sync_to_clones", "result": "success" if not failures else "partial",
-        "source_dataset": source_dataset,
-        "success_count": len(results),
-        "failure_count": len(failures),
-    })
     return {
         "message": "origin 增量同步已执行",
         "source_snapshot": source_snapshot,

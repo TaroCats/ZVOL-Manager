@@ -33,6 +33,10 @@ class SyncOriginSnapshotRequest(BaseModel):
     clone_names: list[str] = Field(default_factory=list, description="可选，仅同步到指定 clone")
 
 
+class PushCloneRequest(BaseModel):
+    ver_label: Optional[str] = Field(default=None, description="可选，版本标签")
+
+
 class CloneZvolRequest(BaseModel):
     snapshot_name: str = Field(description="完整快照名，例如 tank/iscsi/games@before-upgrade")
     pool: str

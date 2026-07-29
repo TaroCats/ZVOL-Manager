@@ -151,12 +151,6 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    ul {
-      margin: 0;
-      padding-left: 18px;
-      color: #b7c7df;
-      line-height: 1.7;
-    }
     .inline-actions {
       display: flex;
       flex-wrap: wrap;
@@ -180,11 +174,15 @@
       border: 1px solid #2a4268;
       border-radius: 14px;
       box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
-      z-index: 10;
+      z-index: 40;
     }
     .toast.error { border-color: #7f1d1d; color: #ffc6c6; }
     .toast.success { border-color: #14532d; color: #b8ffd1; }
-    .profile-grid { gap: 12px; }
+    .toast.warning {
+      background: #24130f;
+      border-color: #9a3412;
+      color: #ffd3b2;
+    }
     .mt14 { margin-top: 14px; }
     .small { font-size: 12px; color: #8da3c4; }
     .tag-row {
@@ -208,8 +206,86 @@
       border-radius: 999px;
       font-size: 11px;
     }
+    .action-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .action-grid button {
+      min-width: 140px;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 28px 20px;
+      background: rgba(3, 8, 18, 0.72);
+      backdrop-filter: blur(14px);
+      z-index: 30;
+    }
+    .modal-panel {
+      width: min(760px, 100%);
+      max-height: calc(100vh - 56px);
+      overflow: auto;
+      background: rgba(17, 28, 49, 0.96);
+      border: 1px solid #223554;
+      border-radius: 24px;
+      padding: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.36);
+    }
+    .modal-panel-wide {
+      width: min(1180px, 100%);
+    }
+    .modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .modal-header h2 {
+      margin-bottom: 6px;
+    }
+    .modal-grid {
+      margin-top: 4px;
+    }
+    .confirm-backdrop {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(3, 8, 18, 0.6);
+      backdrop-filter: blur(10px);
+      z-index: 50;
+    }
+    .confirm-panel {
+      width: min(480px, 100%);
+      background: rgba(17, 28, 49, 0.98);
+      border: 1px solid #223554;
+      border-radius: 22px;
+      padding: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.38);
+    }
+    .confirm-message {
+      color: #b7c7df;
+      line-height: 1.7;
+      margin: 0 0 18px;
+      white-space: pre-wrap;
+    }
     @media (max-width: 960px) {
       .col-4, .col-5, .col-6, .col-7, .col-8, .col-12 { grid-column: span 12; }
+      .modal-backdrop {
+        padding: 12px;
+      }
+      .modal-panel {
+        max-height: calc(100vh - 24px);
+        padding: 16px;
+      }
     }
   </style>
 </head>
@@ -217,7 +293,7 @@
   <div id="app" class="shell">
     <div class="hero">
       <h1>ZVOL Manager</h1>
-      <p>按帖子里的路线直接做：创建 ZVOL，注册为 LIO IBLOCK backstore，再分别创建 iSCSI Target 和 LUN。应用不再依赖 fnOS 官方 iSCSI 应用做读写配置，ACL / CHAP / Portal / MCS 由你按自己的网络环境继续细化。</p>
+      <p>主页面只保留状态和列表；所有创建、挂载、认证和 Target 配置都通过弹窗完成，避免设置区常驻页面造成误操作。</p>
     </div>
 
     <div v-if="toast" class="toast" :class="toast.type">{{ toast.message }}</div>
@@ -239,117 +315,25 @@
       </section>
 
       <section class="card col-8">
-        <h2>帖子推荐参数</h2>
-        <div class="grid profile-grid">
-          <div class="col-4">
-            <div class="muted">Pool</div>
-            <ul>
-              <li v-for="(value, key) in profile.pool_recommended || {}" :key="key">{{ key }} = {{ value }}</li>
-            </ul>
-          </div>
-          <div class="col-4">
-            <div class="muted">ZVOL</div>
-            <ul>
-              <li v-for="(value, key) in profile.zvol_recommended || {}" :key="key">{{ key }} = {{ value }}</li>
-            </ul>
-          </div>
-          <div class="col-4">
-            <div class="muted">LIO / IBLOCK</div>
-            <ul>
-              <li v-for="(value, key) in profile.lio_recommended || {}" :key="key">{{ key }} = {{ value }}</li>
-            </ul>
-          </div>
-          <div class="col-12">
-            <div class="muted">注意事项</div>
-            <ul>
-              <li v-for="warning in profile.warnings || []" :key="warning">{{ warning }}</li>
-            </ul>
-          </div>
+        <h2>快捷操作</h2>
+        <div class="muted">创建和设置都改为弹窗；列表页只承担查看和触发入口。</div>
+        <div class="action-grid">
+          <button type="button" @click="openCreateZvolModal" :disabled="busy">创建 ZVOL</button>
+          <button type="button" @click="openCreateTargetModal" :disabled="busy">创建 Target</button>
+          <button type="button" @click="openCreateLunModal()" :disabled="busy || !targets.length || !availableLunBackstores.length">创建 LUN</button>
+          <button type="button" class="secondary" @click="openTargetConfigModal()" :disabled="busy || !targets.length">配置 Target</button>
+          <button type="button" class="secondary" @click="loadAll" :disabled="busy">刷新列表</button>
         </div>
-      </section>
-
-      <section class="card col-4">
-        <h2>创建 ZVOL</h2>
-        <div class="field">
-          <label>存储池</label>
-          <select v-model="zvolForm.pool" title="选择存储池">
-            <option value="">请选择存储池</option>
-            <option v-for="pool in pools" :key="pool.name" :value="pool.name">{{ pool.name }}</option>
-          </select>
+        <div class="hint">
+          <div>Target 的 Portal、ACL、CHAP 和认证参数都在同一个配置弹窗里处理。</div>
+          <div>如果要把 ZVOL 导出为 LUN，先给它创建 Backstore，再在弹窗中选择目标 Target 挂载。</div>
         </div>
-        <div class="field">
-          <label>父数据集</label>
-          <input v-model="zvolForm.parent_dataset" placeholder="默认 iscsi">
-        </div>
-        <div class="field">
-          <label>ZVOL 名称</label>
-          <input v-model="zvolForm.name" placeholder="例如 steam">
-        </div>
-        <div class="field">
-          <label>容量</label>
-          <input v-model="zvolForm.size" placeholder="例如 10G">
-        </div>
-        <div class="field">
-          <label>volblocksize</label>
-          <input v-model="zvolForm.volblocksize">
-        </div>
-        <div class="field">
-          <label>compression</label>
-          <input v-model="zvolForm.compression">
-        </div>
-        <div class="field">
-          <label>sync</label>
-          <input v-model="zvolForm.sync">
-        </div>
-        <label class="checkbox">
-          <input type="checkbox" v-model="zvolForm.sparse">
-          稀疏 ZVOL
-        </label>
-        <div class="hint">帖子推荐厚置备，因此默认关闭稀疏。创建时会自动确保 `pool/parent_dataset` 存在，并使用 `mountpoint=none`。</div>
-        <div class="inline-actions mt14">
-          <button type="button" @click="createZvol" :disabled="busy">创建 ZVOL</button>
-          <button type="button" class="secondary" @click="loadAll" :disabled="busy">刷新</button>
-        </div>
-      </section>
-
-      <section class="card col-4">
-        <h2>创建 iSCSI Target</h2>
-        <div class="field">
-          <label>IQN</label>
-          <input v-model="targetForm.iqn" placeholder="例如 iqn.2026-07.local.fnos:steam">
-        </div>
-        <div class="field">
-          <label>说明</label>
-          <div class="hint">这里现在只创建 Target 本身，不再顺带创建 LUN。Target 建好后，请在右侧单独选择已有 Backstore 挂载为 LUN。</div>
-        </div>
-        <div class="inline-actions mt14">
-          <button type="button" @click="createTarget" :disabled="busy">创建 Target</button>
-        </div>
-      </section>
-
-      <section class="card col-4">
-        <h2>创建 LUN</h2>
-        <div class="field">
-          <label>Target</label>
-          <select v-model="lunForm.iqn" title="选择要挂载 LUN 的 Target">
+        <div class="field mt14">
+          <label>当前选中的 Target</label>
+          <select v-model="selectedTargetIqn" title="选择 Target">
             <option value="">请选择 Target</option>
             <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ target.iqn }}</option>
           </select>
-        </div>
-        <div class="field">
-          <label>Backstore</label>
-          <select v-model="lunForm.backstore_name" title="选择已有 Backstore">
-            <option value="">请选择 Backstore</option>
-            <option v-for="item in availableLunBackstores" :key="item.name" :value="item.name">{{ item.name }} ({{ item.zvol_name || '-' }})</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>TPG</label>
-          <input v-model.number="lunForm.tpg" placeholder="默认 1">
-        </div>
-        <div class="hint">LUN 现在独立创建。先准备 Backstore，再选目标 Target 挂进去。</div>
-        <div class="inline-actions mt14">
-          <button type="button" @click="createLun" :disabled="busy || !lunForm.iqn || !lunForm.backstore_name">创建 LUN</button>
         </div>
       </section>
 
@@ -384,9 +368,33 @@
               <td>{{ item.iscsi_targets && item.iscsi_targets.length ? item.iscsi_targets.join(', ') : '未导出' }}</td>
               <td>
                 <div class="inline-actions">
-                  <button type="button" class="secondary" @click="fillLunForm(item)" :disabled="busy">填入 LUN 表单</button>
-                  <button type="button" v-if="!item.backstore" class="secondary" @click="createBackstore(item.name)" :disabled="busy">创建 Backstore</button>
-                  <button type="button" v-else class="danger" @click="deleteBackstore(item.backstore.name)" :disabled="busy || (item.iscsi_targets && item.iscsi_targets.length > 0)">删除 Backstore</button>
+                  <button
+                    v-if="!item.backstore"
+                    type="button"
+                    class="secondary"
+                    @click="openBackstoreModal(item.name)"
+                    :disabled="busy"
+                  >
+                    创建 Backstore
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="secondary"
+                    @click="openCreateLunModal({ backstoreName: item.backstore.name, iqn: item.iscsi_targets && item.iscsi_targets.length === 1 ? item.iscsi_targets[0] : '' })"
+                    :disabled="busy || item.iscsi_targets && item.iscsi_targets.length > 0"
+                  >
+                    挂载为 LUN
+                  </button>
+                  <button
+                    v-if="item.backstore"
+                    type="button"
+                    class="danger"
+                    @click="deleteBackstore(item.backstore.name)"
+                    :disabled="busy || (item.iscsi_targets && item.iscsi_targets.length > 0)"
+                  >
+                    删除 Backstore
+                  </button>
                   <button type="button" class="danger" @click="deleteZvol(item.name)" :disabled="busy || !!item.backstore">删除 ZVOL</button>
                 </div>
               </td>
@@ -424,7 +432,15 @@
               <td>{{ target.settings && target.settings.authentication ? 'CHAP 已启用' : '未启用' }}</td>
               <td>
                 <div class="inline-actions">
-                  <button type="button" class="secondary" @click="selectTarget(target)">配置</button>
+                  <button type="button" class="secondary" @click="openTargetConfigModal(target)" :disabled="busy">配置</button>
+                  <button
+                    type="button"
+                    class="secondary"
+                    @click="openCreateLunModal({ iqn: target.iqn, tpg: target.settings ? parseTpgValue(target.settings.tpg) : 1 })"
+                    :disabled="busy || !availableLunBackstores.length"
+                  >
+                    添加 LUN
+                  </button>
                   <button type="button" class="danger" @click="deleteTarget(target.iqn, false)" :disabled="busy">删除 Target</button>
                   <button type="button" class="danger" @click="deleteTarget(target.iqn, true)" :disabled="busy">删 Target+Backstore</button>
                 </div>
@@ -433,137 +449,6 @@
             </tr>
           </tbody>
         </table>
-      </section>
-
-      <section class="card col-4">
-        <h2>Target 设置</h2>
-        <div class="field">
-          <label>目标 IQN</label>
-          <select v-model="selectedTargetIqn" title="选择要配置的 Target">
-            <option value="">请选择 Target</option>
-            <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ target.iqn }}</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>TPG</label>
-          <input v-model.number="targetSettingsForm.tpg" placeholder="默认 1">
-        </div>
-        <label class="checkbox">
-          <input type="checkbox" v-model="targetSettingsForm.authentication">
-          启用认证
-        </label>
-        <label class="checkbox">
-          <input type="checkbox" v-model="targetSettingsForm.generate_node_acls">
-          generate_node_acls
-        </label>
-        <div class="field">
-          <label>Target 级 CHAP 用户名</label>
-          <input v-model="targetSettingsForm.userid" placeholder="generate_node_acls=1 时使用">
-        </div>
-        <div class="field">
-          <label>Target 级 CHAP 密码</label>
-          <input v-model="targetSettingsForm.password" placeholder="留空则不改">
-        </div>
-        <div class="field">
-          <label>Mutual 用户名</label>
-          <input v-model="targetSettingsForm.mutual_userid" placeholder="可选">
-        </div>
-        <div class="field">
-          <label>Mutual 密码</label>
-          <input v-model="targetSettingsForm.mutual_password" placeholder="可选">
-        </div>
-        <div class="hint">
-          <div>当前 target：{{ selectedTarget ? selectedTarget.iqn : '未选择' }}</div>
-          <div v-if="selectedTarget && selectedTarget.settings">{{ selectedTarget.settings.mcs_hint }}</div>
-          <div>如果你要精确限制 initiator，一般保持 `generate_node_acls=0`，再到右侧 ACL 区给每个 initiator 单独写 CHAP。</div>
-        </div>
-        <div class="inline-actions mt14">
-          <button type="button" @click="saveTargetSettings" :disabled="busy || !selectedTargetIqn">保存 Target 设置</button>
-        </div>
-      </section>
-
-      <section class="card col-4">
-        <h2>Portal 管理</h2>
-        <div class="field">
-          <label>IP</label>
-          <input v-model="portalForm.ip" placeholder="例如 192.168.1.10">
-        </div>
-        <div class="field">
-          <label>端口</label>
-          <input v-model.number="portalForm.port" placeholder="默认 3260">
-        </div>
-        <div class="field">
-          <label>TPG</label>
-          <input v-model.number="portalForm.tpg" placeholder="默认 1">
-        </div>
-        <div class="hint">多 portal 可以作为多路径 / 多连接基础。真正的 MCS 仍需要 initiator 侧启用多连接，或者走 multipath。</div>
-        <div class="inline-actions mt14">
-          <button type="button" @click="addPortal" :disabled="busy || !selectedTargetIqn">添加 Portal</button>
-        </div>
-        <div class="field mt14">
-          <label>已有 Portal</label>
-          <select v-model="selectedPortalValue" title="选择已有 Portal">
-            <option value="">请选择要删除的 Portal</option>
-            <option v-for="portal in (selectedTarget && selectedTarget.portals ? selectedTarget.portals : [])" :key="portal" :value="portal">{{ portal }}</option>
-          </select>
-        </div>
-        <div class="inline-actions">
-          <button type="button" class="danger" @click="deletePortal" :disabled="busy || !selectedTargetIqn || !selectedPortalValue">删除选中 Portal</button>
-        </div>
-      </section>
-
-      <section class="card col-4">
-        <h2>ACL / CHAP</h2>
-        <div class="field">
-          <label>新增 ACL 的 Initiator IQN</label>
-          <input v-model="aclForm.initiator_iqn" placeholder="例如 iqn.1991-05.com.microsoft:win11">
-        </div>
-        <div class="field">
-          <label>TPG</label>
-          <input v-model.number="aclForm.tpg" placeholder="默认 1">
-        </div>
-        <div class="inline-actions mt14">
-          <button type="button" @click="addAcl" :disabled="busy || !selectedTargetIqn">添加 ACL</button>
-        </div>
-
-        <div class="field mt14">
-          <label>已有 ACL</label>
-          <select v-model="selectedAclIqn" title="选择已有 ACL">
-            <option value="">请选择 ACL</option>
-            <option v-for="acl in (selectedTarget && selectedTarget.acls ? selectedTarget.acls : [])" :key="acl.initiator_iqn" :value="acl.initiator_iqn">{{ acl.initiator_iqn }}</option>
-          </select>
-        </div>
-        <div class="inline-actions">
-          <button type="button" class="secondary" @click="loadSelectedAclChap" :disabled="busy || !selectedAclIqn">载入 ACL CHAP</button>
-          <button type="button" class="danger" @click="deleteAcl" :disabled="busy || !selectedTargetIqn || !selectedAclIqn">删除选中 ACL</button>
-        </div>
-
-        <div class="field mt14">
-          <label>CHAP 目标 ACL</label>
-          <select v-model="aclChapForm.initiator_iqn" title="选择要配置 CHAP 的 ACL">
-            <option value="">请选择 ACL</option>
-            <option v-for="acl in (selectedTarget && selectedTarget.acls ? selectedTarget.acls : [])" :key="acl.initiator_iqn" :value="acl.initiator_iqn">{{ acl.initiator_iqn }}</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>CHAP 用户名</label>
-          <input v-model="aclChapForm.userid" placeholder="必填">
-        </div>
-        <div class="field">
-          <label>CHAP 密码</label>
-          <input v-model="aclChapForm.password" placeholder="必填">
-        </div>
-        <div class="field">
-          <label>Mutual 用户名</label>
-          <input v-model="aclChapForm.mutual_userid" placeholder="可选">
-        </div>
-        <div class="field">
-          <label>Mutual 密码</label>
-          <input v-model="aclChapForm.mutual_password" placeholder="可选">
-        </div>
-        <div class="inline-actions mt14">
-          <button type="button" @click="saveAclChap" :disabled="busy || !selectedTargetIqn || !aclChapForm.initiator_iqn">保存 ACL CHAP</button>
-        </div>
       </section>
 
       <section class="card col-12">
@@ -595,6 +480,273 @@
         </table>
       </section>
     </div>
+
+    <div v-if="activeModal" class="modal-backdrop" @click.self="closeModal">
+      <div class="modal-panel" :class="{ 'modal-panel-wide': activeModal === 'target-config' }">
+        <div class="modal-header">
+          <div>
+            <h2>{{ modalTitle }}</h2>
+            <div v-if="activeModal === 'target-config'" class="small">当前 Target：{{ selectedTarget ? selectedTarget.iqn : '未选择' }}</div>
+          </div>
+          <button type="button" class="secondary" @click="closeModal" :disabled="busy">关闭</button>
+        </div>
+
+        <template v-if="activeModal === 'zvol'">
+          <div class="field">
+            <label>存储池</label>
+            <select v-model="zvolForm.pool" title="选择存储池">
+              <option value="">请选择存储池</option>
+              <option v-for="pool in pools" :key="pool.name" :value="pool.name">{{ pool.name }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>父数据集</label>
+            <input v-model="zvolForm.parent_dataset" placeholder="默认 iscsi">
+          </div>
+          <div class="field">
+            <label>ZVOL 名称</label>
+            <input v-model="zvolForm.name" placeholder="例如 steam">
+          </div>
+          <div class="field">
+            <label>容量</label>
+            <input v-model="zvolForm.size" placeholder="例如 10G">
+          </div>
+          <div class="field">
+            <label>volblocksize</label>
+            <input v-model="zvolForm.volblocksize">
+          </div>
+          <div class="field">
+            <label>compression</label>
+            <input v-model="zvolForm.compression">
+          </div>
+          <div class="field">
+            <label>sync</label>
+            <input v-model="zvolForm.sync">
+          </div>
+          <label class="checkbox">
+            <input type="checkbox" v-model="zvolForm.sparse">
+            稀疏 ZVOL
+          </label>
+          <div class="hint">创建时会自动确保 `pool/parent_dataset` 存在，并使用 `mountpoint=none`。默认按厚置备思路保留 `sparse=off`。</div>
+          <div class="inline-actions mt14">
+            <button type="button" @click="createZvol" :disabled="busy || !zvolForm.pool || !zvolForm.name || !zvolForm.size">创建 ZVOL</button>
+          </div>
+        </template>
+
+        <template v-else-if="activeModal === 'backstore'">
+          <div class="field">
+            <label>ZVOL</label>
+            <input v-model="backstoreForm.zvol_name" readonly>
+          </div>
+          <div class="field">
+            <label>Backstore 名称</label>
+            <input v-model="backstoreForm.backstore_name" placeholder="留空则按默认命名">
+          </div>
+          <div class="hint">未填写名称时，后端会按 `pool_dataset_name` 形式自动生成。</div>
+          <div class="inline-actions mt14">
+            <button type="button" @click="createBackstore" :disabled="busy || !backstoreForm.zvol_name">创建 Backstore</button>
+          </div>
+        </template>
+
+        <template v-else-if="activeModal === 'target'">
+          <div class="field">
+            <label>IQN</label>
+            <input v-model="targetForm.iqn" placeholder="例如 iqn.2026-07.local.fnos:steam">
+          </div>
+          <div class="field">
+            <label>TPG</label>
+            <input v-model.number="targetForm.tpg" placeholder="默认 1">
+          </div>
+          <div class="hint">这里只创建 Target 本身，不顺带挂 LUN。Target 建好后，请在 LUN 弹窗里选择已有 Backstore 挂载。</div>
+          <div class="inline-actions mt14">
+            <button type="button" @click="createTarget" :disabled="busy || !targetForm.iqn">创建 Target</button>
+          </div>
+        </template>
+
+        <template v-else-if="activeModal === 'lun'">
+          <div class="field">
+            <label>Target</label>
+            <select v-model="lunForm.iqn" title="选择要挂载 LUN 的 Target">
+              <option value="">请选择 Target</option>
+              <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ target.iqn }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Backstore</label>
+            <select v-model="lunForm.backstore_name" title="选择已有 Backstore">
+              <option value="">请选择 Backstore</option>
+              <option v-for="item in availableLunBackstores" :key="item.name" :value="item.name">{{ item.name }} ({{ item.zvol_name || '-' }})</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>TPG</label>
+            <input v-model.number="lunForm.tpg" placeholder="默认 1">
+          </div>
+          <div class="hint">这里只展示当前未被 Target 使用的 Backstore，避免重复挂载。</div>
+          <div class="inline-actions mt14">
+            <button type="button" @click="createLun" :disabled="busy || !lunForm.iqn || !lunForm.backstore_name">创建 LUN</button>
+          </div>
+        </template>
+
+        <template v-else-if="activeModal === 'target-config'">
+          <div class="grid modal-grid">
+            <section class="card col-4">
+              <h2>Target 设置</h2>
+              <div class="field">
+                <label>目标 IQN</label>
+                <select v-model="selectedTargetIqn" title="选择要配置的 Target">
+                  <option value="">请选择 Target</option>
+                  <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ target.iqn }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>TPG</label>
+                <input v-model.number="targetSettingsForm.tpg" placeholder="默认 1">
+              </div>
+              <label class="checkbox">
+                <input type="checkbox" v-model="targetSettingsForm.authentication">
+                启用认证
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" v-model="targetSettingsForm.generate_node_acls">
+                generate_node_acls
+              </label>
+              <div class="field">
+                <label>Target 级 CHAP 用户名</label>
+                <input v-model="targetSettingsForm.userid" placeholder="generate_node_acls=1 时使用">
+              </div>
+              <div class="field">
+                <label>Target 级 CHAP 密码</label>
+                <input v-model="targetSettingsForm.password" placeholder="留空则不改">
+              </div>
+              <div class="field">
+                <label>Mutual 用户名</label>
+                <input v-model="targetSettingsForm.mutual_userid" placeholder="可选">
+              </div>
+              <div class="field">
+                <label>Mutual 密码</label>
+                <input v-model="targetSettingsForm.mutual_password" placeholder="可选">
+              </div>
+              <div class="hint">
+                <div>当前 target：{{ selectedTarget ? selectedTarget.iqn : '未选择' }}</div>
+                <div v-if="selectedTarget && selectedTarget.settings">{{ selectedTarget.settings.mcs_hint }}</div>
+                <div>如果你要精确限制 initiator，一般保持 `generate_node_acls=0`，再到 ACL 区给每个 initiator 单独写 CHAP。</div>
+              </div>
+              <div class="inline-actions mt14">
+                <button type="button" @click="saveTargetSettings" :disabled="busy || !selectedTargetIqn">保存 Target 设置</button>
+              </div>
+            </section>
+
+            <section class="card col-4">
+              <h2>Portal 管理</h2>
+              <div class="field">
+                <label>IP</label>
+                <input v-model="portalForm.ip" placeholder="例如 192.168.1.10">
+              </div>
+              <div class="field">
+                <label>端口</label>
+                <input v-model.number="portalForm.port" placeholder="默认 3260">
+              </div>
+              <div class="field">
+                <label>TPG</label>
+                <input v-model.number="portalForm.tpg" placeholder="默认 1">
+              </div>
+              <div class="hint">多 portal 可以作为多路径或多连接基础。真正的 MCS 仍需要 initiator 侧启用多连接，或者走 multipath。</div>
+              <div class="inline-actions mt14">
+                <button type="button" @click="addPortal" :disabled="busy || !selectedTargetIqn || !portalForm.ip">添加 Portal</button>
+              </div>
+              <div class="field mt14">
+                <label>已有 Portal</label>
+                <select v-model="selectedPortalValue" title="选择已有 Portal">
+                  <option value="">请选择要删除的 Portal</option>
+                  <option v-for="portal in (selectedTarget && selectedTarget.portals ? selectedTarget.portals : [])" :key="portal" :value="portal">{{ portal }}</option>
+                </select>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="danger" @click="deletePortal" :disabled="busy || !selectedTargetIqn || !selectedPortalValue">删除选中 Portal</button>
+              </div>
+            </section>
+
+            <section class="card col-4">
+              <h2>ACL / CHAP</h2>
+              <div class="field">
+                <label>新增 ACL 的 Initiator IQN</label>
+                <input v-model="aclForm.initiator_iqn" placeholder="例如 iqn.1991-05.com.microsoft:win11">
+              </div>
+              <div class="field">
+                <label>TPG</label>
+                <input v-model.number="aclForm.tpg" placeholder="默认 1">
+              </div>
+              <div class="inline-actions mt14">
+                <button type="button" @click="addAcl" :disabled="busy || !selectedTargetIqn || !aclForm.initiator_iqn">添加 ACL</button>
+              </div>
+
+              <div class="field mt14">
+                <label>已有 ACL</label>
+                <select v-model="selectedAclIqn" title="选择已有 ACL">
+                  <option value="">请选择 ACL</option>
+                  <option v-for="acl in (selectedTarget && selectedTarget.acls ? selectedTarget.acls : [])" :key="acl.initiator_iqn" :value="acl.initiator_iqn">{{ acl.initiator_iqn }}</option>
+                </select>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="secondary" @click="loadSelectedAclChap" :disabled="busy || !selectedAclIqn">载入 ACL CHAP</button>
+                <button type="button" class="danger" @click="deleteAcl" :disabled="busy || !selectedTargetIqn || !selectedAclIqn">删除选中 ACL</button>
+              </div>
+
+              <div class="field mt14">
+                <label>CHAP 目标 ACL</label>
+                <select v-model="aclChapForm.initiator_iqn" title="选择要配置 CHAP 的 ACL">
+                  <option value="">请选择 ACL</option>
+                  <option v-for="acl in (selectedTarget && selectedTarget.acls ? selectedTarget.acls : [])" :key="acl.initiator_iqn" :value="acl.initiator_iqn">{{ acl.initiator_iqn }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>CHAP 用户名</label>
+                <input v-model="aclChapForm.userid" placeholder="必填">
+              </div>
+              <div class="field">
+                <label>CHAP 密码</label>
+                <input v-model="aclChapForm.password" placeholder="必填">
+              </div>
+              <div class="field">
+                <label>Mutual 用户名</label>
+                <input v-model="aclChapForm.mutual_userid" placeholder="可选">
+              </div>
+              <div class="field">
+                <label>Mutual 密码</label>
+                <input v-model="aclChapForm.mutual_password" placeholder="可选">
+              </div>
+              <div class="inline-actions mt14">
+                <button type="button" @click="saveAclChap" :disabled="busy || !selectedTargetIqn || !aclChapForm.initiator_iqn || !aclChapForm.userid || !aclChapForm.password">保存 ACL CHAP</button>
+              </div>
+            </section>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div v-if="confirmDialog.visible" class="confirm-backdrop" @click.self="closeConfirmDialog">
+      <div class="confirm-panel">
+        <div class="modal-header">
+          <div>
+            <h2>{{ confirmDialog.title }}</h2>
+          </div>
+          <button type="button" class="secondary" @click="closeConfirmDialog" :disabled="busy">关闭</button>
+        </div>
+        <p class="confirm-message">{{ confirmDialog.message }}</p>
+        <div class="inline-actions">
+          <button type="button" class="secondary" @click="closeConfirmDialog" :disabled="busy">取消</button>
+          <button
+            type="button"
+            :class="{ danger: confirmDialog.danger }"
+            @click="runConfirmDialog"
+            :disabled="busy"
+          >
+            {{ confirmDialog.confirmLabel }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -606,14 +758,22 @@
           busy: false,
           toast: null,
           health: {},
-          profile: {},
           pools: [],
           zvols: [],
           backstores: [],
           targets: [],
+          activeModal: "",
           selectedTargetIqn: "",
           selectedPortalValue: "",
           selectedAclIqn: "",
+          confirmDialog: {
+            visible: false,
+            title: "",
+            message: "",
+            confirmLabel: "确认",
+            danger: true,
+            onConfirm: null
+          },
           zvolForm: {
             pool: "",
             parent_dataset: "iscsi",
@@ -623,6 +783,10 @@
             compression: "lz4",
             sync: "standard",
             sparse: false
+          },
+          backstoreForm: {
+            zvol_name: "",
+            backstore_name: ""
           },
           targetForm: {
             iqn: "",
@@ -667,6 +831,14 @@
         },
         availableLunBackstores() {
           return this.backstores.filter((item) => !item.in_use);
+        },
+        modalTitle() {
+          if (this.activeModal === "zvol") return "创建 ZVOL";
+          if (this.activeModal === "backstore") return "创建 Backstore";
+          if (this.activeModal === "target") return "创建 iSCSI Target";
+          if (this.activeModal === "lun") return "创建 LUN";
+          if (this.activeModal === "target-config") return "配置 Target";
+          return "";
         }
       },
       watch: {
@@ -710,20 +882,24 @@
             this.toast = null;
           }, 2600);
         },
+        notifyDeleted(message) {
+          this.notify(message, "warning");
+        },
+        parseTpgValue(value) {
+          return Number.parseInt(String(value || "1").replace(/\D/g, ""), 10) || 1;
+        },
         async loadAll() {
           try {
             const results = await Promise.allSettled([
               this.api("/api/health"),
-              this.api("/api/profile"),
               this.api("/api/pools"),
               this.api("/api/zvols"),
               this.api("/api/backstores"),
               this.api("/api/iscsi/targets")
             ]);
 
-            const [health, profile, pools, zvols, backstores, targets] = results;
+            const [health, pools, zvols, backstores, targets] = results;
             if (health.status === "fulfilled") this.health = health.value;
-            if (profile.status === "fulfilled") this.profile = profile.value;
             if (pools.status === "fulfilled") this.pools = pools.value.pools || [];
             if (zvols.status === "fulfilled") this.zvols = zvols.value.zvols || [];
             if (backstores.status === "fulfilled") this.backstores = backstores.value.backstores || [];
@@ -737,15 +913,88 @@
             }
             if (this.selectedTargetIqn) {
               const found = this.targets.find((item) => item.iqn === this.selectedTargetIqn);
-              if (found) this.selectTarget(found, false);
+              if (found) {
+                this.selectTarget(found, false);
+              } else {
+                this.selectedTargetIqn = "";
+                this.selectedPortalValue = "";
+                this.selectedAclIqn = "";
+              }
             }
           } catch (error) {
             this.notify(error.message, "error");
           }
         },
-        selectTarget(target, notify = false) {
+        closeModal() {
+          this.activeModal = "";
+        },
+        openConfirmDialog(options) {
+          this.confirmDialog = {
+            visible: true,
+            title: options.title || "请确认",
+            message: options.message || "",
+            confirmLabel: options.confirmLabel || "确认",
+            danger: options.danger !== false,
+            onConfirm: options.onConfirm || null
+          };
+        },
+        closeConfirmDialog() {
+          this.confirmDialog = {
+            visible: false,
+            title: "",
+            message: "",
+            confirmLabel: "确认",
+            danger: true,
+            onConfirm: null
+          };
+        },
+        async runConfirmDialog() {
+          const handler = this.confirmDialog.onConfirm;
+          this.closeConfirmDialog();
+          if (typeof handler === "function") {
+            await handler();
+          }
+        },
+        openCreateZvolModal() {
+          this.activeModal = "zvol";
+        },
+        openBackstoreModal(zvolName) {
+          this.backstoreForm.zvol_name = zvolName;
+          this.backstoreForm.backstore_name = "";
+          this.activeModal = "backstore";
+        },
+        openCreateTargetModal() {
+          this.targetForm.iqn = "";
+          this.targetForm.tpg = 1;
+          this.activeModal = "target";
+        },
+        openCreateLunModal(prefill = {}) {
+          if (!this.targets.length) {
+            this.notify("暂无可挂载的 Target", "error");
+            return;
+          }
+          if (!this.availableLunBackstores.length && !prefill.backstoreName) {
+            this.notify("暂无可用 Backstore，请先创建 Backstore", "error");
+            return;
+          }
+          if (prefill.iqn) this.lunForm.iqn = prefill.iqn;
+          if (prefill.backstoreName) this.lunForm.backstore_name = prefill.backstoreName;
+          if (prefill.tpg) this.lunForm.tpg = prefill.tpg;
+          this.activeModal = "lun";
+        },
+        openTargetConfigModal(target = null) {
+          const picked = target || this.selectedTarget || this.targets[0];
+          if (!picked) {
+            this.notify("暂无可配置的 Target", "error");
+            return;
+          }
+          this.selectTarget(picked, false);
+          this.activeModal = "target-config";
+        },
+        selectTarget(target, withNotice = false) {
           this.selectedTargetIqn = target.iqn;
           const settings = target.settings || {};
+          const tpg = this.parseTpgValue(settings.tpg);
           this.targetSettingsForm = {
             authentication: !!settings.authentication,
             generate_node_acls: !!settings.generate_node_acls,
@@ -753,13 +1002,13 @@
             password: "",
             mutual_userid: settings.mutual_userid || "",
             mutual_password: "",
-            tpg: Number.parseInt(String(settings.tpg || "1").replace(/\D/g, ""), 10) || 1
+            tpg
           };
           this.lunForm.iqn = target.iqn;
-          this.portalForm.tpg = this.targetSettingsForm.tpg;
-          this.aclForm.tpg = this.targetSettingsForm.tpg;
-          this.aclChapForm.tpg = this.targetSettingsForm.tpg;
-          this.lunForm.tpg = this.targetSettingsForm.tpg;
+          this.lunForm.tpg = tpg;
+          this.portalForm.tpg = tpg;
+          this.aclForm.tpg = tpg;
+          this.aclChapForm.tpg = tpg;
           this.selectedPortalValue = target.portals && target.portals.length ? target.portals[0] : "";
           this.selectedAclIqn = target.acls && target.acls.length ? target.acls[0].initiator_iqn : "";
           if (this.selectedAclIqn) {
@@ -772,7 +1021,7 @@
             this.aclChapForm.mutual_userid = "";
             this.aclChapForm.mutual_password = "";
           }
-          if (notify) this.notify("已载入 Target 配置");
+          if (withNotice) this.notify("已载入 Target 配置");
         },
         applyAclToChapForm(acl) {
           this.aclChapForm.initiator_iqn = acl.initiator_iqn;
@@ -780,12 +1029,6 @@
           this.aclChapForm.password = "";
           this.aclChapForm.mutual_userid = acl.mutual_userid || "";
           this.aclChapForm.mutual_password = "";
-        },
-        fillLunForm(item) {
-          this.lunForm.backstore_name = item.backstore ? item.backstore.name : "";
-          if (item.iscsi_targets && item.iscsi_targets.length === 1) {
-            this.lunForm.iqn = item.iscsi_targets[0];
-          }
         },
         formatTargetLuns(target) {
           const luns = (target.tpgs || []).flatMap((tpg) =>
@@ -803,21 +1046,27 @@
             this.notify("ZVOL 创建成功");
             this.zvolForm.name = "";
             await this.loadAll();
+            this.closeModal();
           } catch (error) {
             this.notify(error.message, "error");
           } finally {
             this.busy = false;
           }
         },
-        async createBackstore(zvolName) {
+        async createBackstore() {
           this.busy = true;
           try {
+            const payload = { zvol_name: this.backstoreForm.zvol_name };
+            if (this.backstoreForm.backstore_name) {
+              payload.backstore_name = this.backstoreForm.backstore_name;
+            }
             await this.api("/api/backstores", {
               method: "POST",
-              body: JSON.stringify({ zvol_name: zvolName })
+              body: JSON.stringify(payload)
             });
             this.notify("Backstore 创建成功");
             await this.loadAll();
+            this.closeModal();
           } catch (error) {
             this.notify(error.message, "error");
           } finally {
@@ -825,19 +1074,25 @@
           }
         },
         async deleteBackstore(name) {
-          if (!window.confirm(`确认删除 backstore ${name}？`)) return;
-          this.busy = true;
-          try {
-            await this.api(`/api/backstores/${encodeURIComponent(name)}`, {
-              method: "DELETE"
-            });
-            this.notify("Backstore 删除成功");
-            await this.loadAll();
-          } catch (error) {
-            this.notify(error.message, "error");
-          } finally {
-            this.busy = false;
-          }
+          this.openConfirmDialog({
+            title: "删除 Backstore",
+            message: `确认删除 backstore ${name}？`,
+            confirmLabel: "删除",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/backstores/${encodeURIComponent(name)}`, {
+                  method: "DELETE"
+                });
+                this.notifyDeleted("Backstore 删除成功");
+                await this.loadAll();
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
         },
         async createTarget() {
           this.busy = true;
@@ -851,7 +1106,8 @@
             this.targetForm.iqn = "";
             await this.loadAll();
             const created = this.targets.find((item) => item.iqn === createdIqn);
-            if (created) this.selectTarget(created);
+            if (created) this.selectTarget(created, false);
+            this.closeModal();
           } catch (error) {
             this.notify(error.message, "error");
           } finally {
@@ -870,6 +1126,7 @@
             });
             this.notify("LUN 创建成功");
             await this.loadAll();
+            this.closeModal();
           } catch (error) {
             this.notify(error.message, "error");
           } finally {
@@ -880,19 +1137,25 @@
           const question = deleteBackstore
             ? `确认删除 target ${iqn}，并尝试清理它绑定的 backstore？`
             : `确认删除 target ${iqn}？`;
-          if (!window.confirm(question)) return;
-          this.busy = true;
-          try {
-            await this.api(`/api/iscsi/targets/${encodeURIComponent(iqn)}?delete_backstore=${deleteBackstore ? "true" : "false"}`, {
-              method: "DELETE"
-            });
-            this.notify("iSCSI Target 删除成功");
-            await this.loadAll();
-          } catch (error) {
-            this.notify(error.message, "error");
-          } finally {
-            this.busy = false;
-          }
+          this.openConfirmDialog({
+            title: deleteBackstore ? "删除 Target 和 Backstore" : "删除 Target",
+            message: question,
+            confirmLabel: "删除",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/iscsi/targets/${encodeURIComponent(iqn)}?delete_backstore=${deleteBackstore ? "true" : "false"}`, {
+                  method: "DELETE"
+                });
+                this.notifyDeleted("iSCSI Target 删除成功");
+                await this.loadAll();
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
         },
         async saveTargetSettings() {
           this.busy = true;
@@ -933,22 +1196,29 @@
           }
         },
         async deletePortal() {
-          if (!window.confirm(`确认删除 portal ${this.selectedPortalValue}？`)) return;
-          const parts = String(this.selectedPortalValue).split(":");
+          const selectedPortal = this.selectedPortalValue;
+          const parts = String(selectedPortal).split(":");
           const port = parts.pop();
           const ip = parts.join(":");
-          this.busy = true;
-          try {
-            await this.api(`/api/iscsi/targets/${encodeURIComponent(this.selectedTargetIqn)}/portals?ip=${encodeURIComponent(ip)}&port=${encodeURIComponent(port)}&tpg=${encodeURIComponent(this.portalForm.tpg)}`, {
-              method: "DELETE"
-            });
-            this.notify("Portal 删除成功");
-            await this.loadAll();
-          } catch (error) {
-            this.notify(error.message, "error");
-          } finally {
-            this.busy = false;
-          }
+          this.openConfirmDialog({
+            title: "删除 Portal",
+            message: `确认删除 portal ${selectedPortal}？`,
+            confirmLabel: "删除",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/iscsi/targets/${encodeURIComponent(this.selectedTargetIqn)}/portals?ip=${encodeURIComponent(ip)}&port=${encodeURIComponent(port)}&tpg=${encodeURIComponent(this.portalForm.tpg)}`, {
+                  method: "DELETE"
+                });
+                this.notifyDeleted("Portal 删除成功");
+                await this.loadAll();
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
         },
         async addAcl() {
           this.busy = true;
@@ -967,19 +1237,26 @@
           }
         },
         async deleteAcl() {
-          if (!window.confirm(`确认删除 ACL ${this.selectedAclIqn}？`)) return;
-          this.busy = true;
-          try {
-            await this.api(`/api/iscsi/targets/${encodeURIComponent(this.selectedTargetIqn)}/acls?initiator_iqn=${encodeURIComponent(this.selectedAclIqn)}&tpg=${encodeURIComponent(this.aclForm.tpg)}`, {
-              method: "DELETE"
-            });
-            this.notify("ACL 删除成功");
-            await this.loadAll();
-          } catch (error) {
-            this.notify(error.message, "error");
-          } finally {
-            this.busy = false;
-          }
+          const initiatorIqn = this.selectedAclIqn;
+          this.openConfirmDialog({
+            title: "删除 ACL",
+            message: `确认删除 ACL ${initiatorIqn}？`,
+            confirmLabel: "删除",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/iscsi/targets/${encodeURIComponent(this.selectedTargetIqn)}/acls?initiator_iqn=${encodeURIComponent(initiatorIqn)}&tpg=${encodeURIComponent(this.aclForm.tpg)}`, {
+                  method: "DELETE"
+                });
+                this.notifyDeleted("ACL 删除成功");
+                await this.loadAll();
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
         },
         loadSelectedAclChap() {
           const acl = this.selectedTarget && this.selectedTarget.acls
@@ -1011,19 +1288,25 @@
           }
         },
         async deleteZvol(name) {
-          if (!window.confirm(`确认删除 ZVOL ${name}？该操作不可恢复。`)) return;
-          this.busy = true;
-          try {
-            await this.api(`/api/zvols/${encodeURIComponent(name)}`, {
-              method: "DELETE"
-            });
-            this.notify("ZVOL 删除成功");
-            await this.loadAll();
-          } catch (error) {
-            this.notify(error.message, "error");
-          } finally {
-            this.busy = false;
-          }
+          this.openConfirmDialog({
+            title: "删除 ZVOL",
+            message: `确认删除 ZVOL ${name}？该操作不可恢复。`,
+            confirmLabel: "删除",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/zvols/${encodeURIComponent(name)}`, {
+                  method: "DELETE"
+                });
+                this.notifyDeleted("ZVOL 删除成功");
+                await this.loadAll();
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
         }
       },
       mounted() {

@@ -23,6 +23,7 @@ CONFIGFS_ISCSI = CONFIGFS_TARGET_ROOT / "iscsi"
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.:+-]+$")
 SAFE_DATASET_RE = re.compile(r"^[A-Za-z0-9_.:+/-]+$")
 SAFE_IQN_RE = re.compile(r"^[A-Za-z0-9.:_-]+$")
+RESERVED_ISCSI_NAMES = {"discovery_auth"}
 
 ARTICLE_PROFILE = {
     "pool_recommended": {
@@ -330,6 +331,22 @@ def iter_tpg_dirs(iqn_dir: Path) -> list[Path]:
     return sorted(tpgs, key=lambda p: p.name)
 
 
+def read_lun_backstores(lun_dir: Path) -> list[str]:
+    backstore_names: set[str] = set()
+    for entry in sorted(lun_dir.rglob("*")):
+        if not entry.is_symlink():
+            continue
+        try:
+            real_path = Path(os.path.realpath(entry))
+        except OSError:
+            continue
+        if CONFIGFS_TARGET_CORE not in real_path.parents:
+            continue
+        if real_path.name:
+            backstore_names.add(real_path.name)
+    return sorted(backstore_names)
+
+
 def read_iscsi_targets() -> list[dict]:
     targets: list[dict] = []
     if not CONFIGFS_ISCSI.exists():
@@ -338,6 +355,8 @@ def read_iscsi_targets() -> list[dict]:
     backstores_by_name = {item["name"]: item for item in read_backstores()}
     for iqn_dir in sorted(CONFIGFS_ISCSI.iterdir()):
         if not iqn_dir.is_dir():
+            continue
+        if iqn_dir.name in RESERVED_ISCSI_NAMES:
             continue
 
         tpg_items = []
@@ -354,15 +373,8 @@ def read_iscsi_targets() -> list[dict]:
                 for lun_dir in sorted(luns_dir.iterdir()):
                     if not lun_dir.is_dir():
                         continue
-                    linked_backstores = []
-                    for port_link in sorted(lun_dir.iterdir()):
-                        if not port_link.is_symlink():
-                            continue
-                        real_path = os.path.realpath(port_link)
-                        backstore_name = Path(real_path).name
-                        if backstore_name:
-                            used_backstores.add(backstore_name)
-                            linked_backstores.append(backstore_name)
+                    linked_backstores = read_lun_backstores(lun_dir)
+                    used_backstores.update(linked_backstores)
                     lun_items.append({"name": lun_dir.name, "backstores": linked_backstores})
 
             np_dir = tpg_dir / "np"

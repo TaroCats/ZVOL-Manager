@@ -221,9 +221,53 @@
     .filters-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
-      align-items: end;
+      gap: 14px;
+      align-items: flex-end;
       margin-bottom: 14px;
+    }
+    .clone-checkbox-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 8px;
+    }
+    .clone-checkbox-item {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      grid-template-rows: auto auto;
+      gap: 2px 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: border-color 180ms ease, background 180ms ease;
+      background: rgba(7, 12, 20, 0.3);
+    }
+    .clone-checkbox-item:hover {
+      border-color: var(--accent);
+      background: rgba(105, 167, 255, 0.06);
+    }
+    .clone-checkbox-item.selected {
+      border-color: var(--accent);
+      background: rgba(105, 167, 255, 0.1);
+    }
+    .clone-checkbox-item input[type="checkbox"] {
+      grid-row: 1 / 3;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+    .clone-checkbox-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .clone-checkbox-sub {
+      font-size: 12px;
+      color: var(--text-soft);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .filters-row .field {
       margin: 0;
@@ -1044,10 +1088,11 @@
                 <div class="hint">会对每个 clone 使用自己的 origin 作为增量基线，再把该源快照的变更同步过去。</div>
                 <div class="field mt14">
                   <label>同步目标 Clone</label>
-                  <div class="cell-stack">
-                    <label v-for="item in activeOriginCloneTargets" :key="item.name" class="checkbox">
+                  <div class="clone-checkbox-grid">
+                    <label v-for="item in activeOriginCloneTargets" :key="item.name" class="clone-checkbox-item" :class="{ selected: originCloneSelection[item.name] }">
                       <input type="checkbox" v-model="originCloneSelection[item.name]">
-                      {{ shortDatasetName(item.name) }} · {{ item.name }}
+                      <span class="clone-checkbox-label">{{ shortDatasetName(item.name) }}</span>
+                      <span class="clone-checkbox-sub">{{ item.name }}</span>
                     </label>
                   </div>
                 </div>
@@ -1105,7 +1150,7 @@
                             v-else-if="activeOriginCloneTargets.length"
                             type="button"
                             class="secondary ghost"
-                            @click="syncOriginSnapshotToClones(snapshot)"
+                            @click="syncOriginSnapshotFromRow(snapshot)"
                             :disabled="busy"
                           >
                             推送到 Clone
@@ -2056,6 +2101,13 @@
               }
             }
           });
+        },
+        async syncOriginSnapshotFromRow(snapshot) {
+          // 从快照列表行触发时，自动全选所有 clone 并直接发起推送
+          this.originCloneSelection = Object.fromEntries(
+            this.activeOriginCloneTargets.map((item) => [item.name, true])
+          );
+          await this.syncOriginSnapshotToClones(snapshot);
         },
         async syncOriginSnapshotToClones(snapshot = null) {
           const sourceSnapshot = snapshot ? snapshot.name : this.originSyncForm.source_snapshot;

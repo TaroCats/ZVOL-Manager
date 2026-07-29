@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import platform
 import re
 import subprocess
+import threading
+import time
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,13 +22,23 @@ from pydantic import BaseModel, Field
 APP_VERSION = "1.3.0"
 ROOT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
+STATE_DIR = ROOT_DIR / "runtime"
+SNAPSHOT_JOBS_FILE = STATE_DIR / "snapshot_jobs.json"
+LOG_FILE = STATE_DIR / "operations.log"
 CONFIGFS_TARGET_ROOT = Path("/sys/kernel/config/target")
 CONFIGFS_TARGET_CORE = CONFIGFS_TARGET_ROOT / "core"
 CONFIGFS_ISCSI = CONFIGFS_TARGET_ROOT / "iscsi"
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.:+-]+$")
 SAFE_DATASET_RE = re.compile(r"^[A-Za-z0-9_.:+/-]+$")
+SAFE_SNAPSHOT_RE = re.compile(r"^[A-Za-z0-9_.:+/-]+@[A-Za-z0-9_.:+-]+$")
 SAFE_IQN_RE = re.compile(r"^[A-Za-z0-9.:_-]+$")
 RESERVED_ISCSI_NAMES = {"discovery_auth"}
+SCHEDULE_TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
+SCHEDULE_LOOP_INTERVAL = 15
+snapshot_jobs_lock = threading.Lock()
+log_file_lock = threading.Lock()
+snapshot_jobs_started = False
+LOG_LEVELS = {"debug", "info", "warning", "error"}
 
 ARTICLE_PROFILE = {
     "pool_recommended": {
@@ -84,6 +99,25 @@ class CreateBackstoreRequest(BaseModel):
     backstore_name: Optional[str] = None
 
 
+class CreateSnapshotRequest(BaseModel):
+    snapshot_name: str = Field(description="例如 before-upgrade")
+
+
+class ReverseSyncSnapshotRequest(BaseModel):
+    base_snapshot: Optional[str] = Field(default=None, description="可选，自定义增量基线快照")
+
+
+class SyncOriginSnapshotRequest(BaseModel):
+    clone_names: list[str] = Field(default_factory=list, description="可选，仅同步到指定 clone")
+
+
+class CloneZvolRequest(BaseModel):
+    snapshot_name: str = Field(description="完整快照名，例如 tank/iscsi/games@before-upgrade")
+    pool: str
+    parent_dataset: str = Field(default="iscsi")
+    name: str
+
+
 class CreateIscsiTargetRequest(BaseModel):
     iqn: str = Field(description="例如 iqn.2026-07.local.fnos:steam")
     tpg: int = 1
@@ -123,6 +157,14 @@ class AclChapRequest(BaseModel):
     tpg: int = 1
 
 
+class SnapshotScheduleRequest(BaseModel):
+    zvol_name: str
+    prefix: str = Field(default="auto")
+    interval_minutes: int = Field(description="执行周期，单位分钟")
+    keep_count: int = Field(description="最多保留的快照数量")
+    enabled: bool = True
+
+
 def ensure_supported_runtime() -> None:
     if platform.system().lower() != "linux":
         raise HTTPException(status_code=503, detail="当前不是 Linux/fnOS 环境，ZFS 与 LIO 功能不可用")
@@ -131,15 +173,20 @@ def ensure_supported_runtime() -> None:
 
 
 def run_cmd(cmd: list[str], timeout: int = 30) -> str:
+    append_log("debug", "command", "执行命令", {"command": cmd, "timeout": timeout})
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
+        append_log("error", "command", "命令不存在", {"command": cmd})
         raise HTTPException(status_code=500, detail=f"命令不存在：{cmd[0]}")
     except subprocess.TimeoutExpired:
+        append_log("error", "command", "命令执行超时", {"command": cmd, "timeout": timeout})
         raise HTTPException(status_code=500, detail=f"命令超时：{' '.join(cmd)}")
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip() or "命令执行失败"
+        append_log("error", "command", "命令执行失败", {"command": cmd, "detail": detail, "returncode": result.returncode})
         raise HTTPException(status_code=500, detail=detail)
+    append_log("debug", "command", "命令执行成功", {"command": cmd})
     return result.stdout.strip()
 
 
@@ -180,6 +227,153 @@ def normalize_zvol_name(value: str) -> str:
     if "/" not in value:
         raise HTTPException(status_code=400, detail="ZVOL 名称必须包含完整数据集路径，例如 tank/iscsi/steam")
     return value
+
+
+def normalize_snapshot_name(value: str, label: str = "快照名称") -> str:
+    value = value.strip()
+    if not value or not SAFE_SNAPSHOT_RE.fullmatch(value):
+        raise HTTPException(status_code=400, detail=f"{label} 格式不合法")
+    dataset, snapshot = value.split("@", 1)
+    normalize_zvol_name(dataset)
+    require_safe_name(snapshot, "快照短名称")
+    return value
+
+
+def normalize_schedule_prefix(value: str) -> str:
+    value = require_safe_name(value, "定时快照前缀")
+    return value
+
+
+def parse_iso_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def ensure_state_dir() -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def atomic_write_json(path: Path, payload: Any) -> None:
+    ensure_state_dir()
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    temp_path.replace(path)
+
+
+def read_json_file(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def normalize_log_level(level: str) -> str:
+    value = (level or "").strip().lower()
+    if value == "warnning":
+        value = "warning"
+    if value not in LOG_LEVELS:
+        raise HTTPException(status_code=400, detail="日志等级不合法")
+    return value
+
+
+def append_log(level: str, category: str, message: str, details: Optional[dict[str, Any]] = None) -> None:
+    ensure_state_dir()
+    record = {
+        "id": uuid.uuid4().hex,
+        "timestamp": now_iso(),
+        "level": normalize_log_level(level),
+        "category": category,
+        "message": message,
+        "details": details or {},
+    }
+    line = json.dumps(record, ensure_ascii=True) + "\n"
+    with log_file_lock:
+        with LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+
+
+def read_logs(level: str = "", limit: int = 200) -> list[dict]:
+    ensure_state_dir()
+    normalized_level = normalize_log_level(level) if level else ""
+    max_items = max(1, min(int(limit), 1000))
+    if not LOG_FILE.exists():
+        return []
+    records: list[dict] = []
+    with log_file_lock:
+        try:
+            lines = LOG_FILE.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if normalized_level and record.get("level") != normalized_level:
+            continue
+        records.append(record)
+        if len(records) >= max_items:
+            break
+    return records
+
+
+def summarize_log_counts(limit: int = 500) -> dict[str, int]:
+    counts = {level: 0 for level in sorted(LOG_LEVELS)}
+    for record in read_logs(limit=limit):
+        level = record.get("level")
+        if level in counts:
+            counts[level] += 1
+    return counts
+
+
+@app.middleware("http")
+async def access_log_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        if not request.url.path.startswith("/assets"):
+            append_log(
+                "error",
+                "api",
+                f"{request.method} {request.url.path}",
+                {
+                    "status_code": 500,
+                    "duration_ms": duration_ms,
+                    "query": str(request.url.query),
+                    "error": str(exc),
+                },
+            )
+        raise
+
+    duration_ms = int((time.perf_counter() - start) * 1000)
+    if request.url.path not in {"/api/logs"} and not request.url.path.startswith("/assets"):
+        status_code = response.status_code
+        if status_code >= 500:
+            level = "error"
+        elif status_code >= 400:
+            level = "warning"
+        elif request.method.upper() == "GET":
+            level = "debug"
+        else:
+            level = "info"
+        append_log(
+            level,
+            "api",
+            f"{request.method} {request.url.path}",
+            {
+                "status_code": status_code,
+                "duration_ms": duration_ms,
+                "query": str(request.url.query),
+            },
+        )
+    return response
 
 
 def zvol_device_path(zvol_name: str) -> str:
@@ -227,6 +421,368 @@ def get_zfs_property(dataset: str, prop: str, default: str = "-") -> str:
         return default
     value = (result.stdout or "").strip()
     return value or default
+
+
+def list_zvol_rows() -> list[dict]:
+    output = run_cmd(
+        [
+            "zfs",
+            "list",
+            "-H",
+            "-t",
+            "volume",
+            "-o",
+            "name,volsize,used,refer,origin",
+        ]
+    )
+    rows: list[dict] = []
+    for line in output.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 5:
+            continue
+        rows.append(
+            {
+                "name": parts[0],
+                "volsize": parts[1],
+                "used": parts[2],
+                "refer": parts[3],
+                "origin": parts[4] or "-",
+            }
+        )
+    return rows
+
+
+def list_zvol_snapshots(zvol_name: str, clone_names_by_origin: Optional[dict[str, list[str]]] = None) -> list[dict]:
+    result = run_result(
+        [
+            "zfs",
+            "list",
+            "-H",
+            "-t",
+            "snapshot",
+            "-o",
+            "name,used,refer",
+            "-r",
+            zvol_name,
+        ],
+        timeout=60,
+    )
+    if result.returncode != 0:
+        return []
+
+    snapshots: list[dict] = []
+    prefix = f"{zvol_name}@"
+    for line in (result.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3 or not parts[0].startswith(prefix):
+            continue
+        snapshots.append(
+            {
+                "name": parts[0],
+                "short_name": parts[0].split("@", 1)[1],
+                "used": parts[1],
+                "refer": parts[2],
+                "dependent_clones": clone_names_by_origin.get(parts[0], []) if clone_names_by_origin else [],
+            }
+        )
+    return snapshots
+
+
+def find_dependent_clones(snapshot_name: str) -> list[str]:
+    return [row["name"] for row in list_zvol_rows() if row["origin"] == snapshot_name]
+
+
+def snapshot_dataset_name(snapshot_name: str) -> str:
+    return snapshot_name.split("@", 1)[0]
+
+
+def build_origin_chain(zvol_name: str, rows_by_name: dict[str, dict]) -> list[str]:
+    chain: list[str] = []
+    seen: set[str] = set()
+    current = rows_by_name.get(zvol_name)
+    while current and current["origin"] and current["origin"] != "-":
+        origin_snapshot = current["origin"]
+        if origin_snapshot in seen:
+            break
+        chain.append(origin_snapshot)
+        seen.add(origin_snapshot)
+        current = rows_by_name.get(snapshot_dataset_name(origin_snapshot))
+    return chain
+
+
+def get_zvol_row_by_name(zvol_name: str) -> dict:
+    for row in list_zvol_rows():
+        if row["name"] == zvol_name:
+            return row
+    raise HTTPException(status_code=404, detail="ZVOL 不存在")
+
+
+def list_dataset_snapshots(zvol_name: str) -> list[dict]:
+    result = run_result(
+        ["zfs", "list", "-H", "-t", "snapshot", "-o", "name,creation", "-s", "creation", "-r", zvol_name],
+        timeout=60,
+    )
+    if result.returncode != 0:
+        return []
+    snapshots: list[dict] = []
+    prefix = f"{zvol_name}@"
+    for line in (result.stdout or "").splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2 or not parts[0].startswith(prefix):
+            continue
+        snapshots.append({"name": parts[0], "creation": parts[1]})
+    return snapshots
+
+
+def create_snapshot_impl(zvol_name: str, snapshot_short_name: str) -> dict:
+    full_name = normalize_zvol_name(zvol_name)
+    short_name = require_safe_name(snapshot_short_name, "快照名称")
+    full_snapshot_name = f"{full_name}@{short_name}"
+    run_cmd(["zfs", "snapshot", full_snapshot_name], timeout=120)
+    return {
+        "message": "ZVOL 快照创建成功",
+        "zvol_name": full_name,
+        "snapshot_name": full_snapshot_name,
+    }
+
+
+def destroy_snapshot_impl(snapshot_name: str, promote_dependent_clones: bool = True) -> dict:
+    full_snapshot_name = normalize_snapshot_name(snapshot_name, "快照名称")
+    dependent_clones = find_dependent_clones(full_snapshot_name)
+    promoted_clones: list[str] = []
+    if dependent_clones and not promote_dependent_clones:
+        return {
+            "snapshot_name": full_snapshot_name,
+            "promoted_clones": [],
+            "skipped_clones": dependent_clones,
+        }
+    for clone_name in dependent_clones:
+        run_cmd(["zfs", "promote", clone_name], timeout=120)
+        promoted_clones.append(clone_name)
+    run_cmd(["zfs", "destroy", full_snapshot_name], timeout=120)
+    return {
+        "snapshot_name": full_snapshot_name,
+        "promoted_clones": promoted_clones,
+        "skipped_clones": [],
+    }
+
+
+def pipe_zfs_send_receive(base_snapshot: str, source_snapshot: str, target_dataset: str) -> None:
+    preflight = run_result(["zfs", "send", "-nP", "-i", base_snapshot, source_snapshot], timeout=30)
+    if preflight.returncode != 0:
+        detail = (preflight.stderr or preflight.stdout or "").strip() or "增量同步预检查失败"
+        raise HTTPException(status_code=500, detail=detail)
+
+    # 目标 dataset 有快照时 zfs receive -F 仍可能失败，先清理目标上的快照
+    target_snapshots = list_dataset_snapshots(target_dataset)
+    if target_snapshots:
+        for snap in target_snapshots:
+            run_result(["zfs", "destroy", "-d", snap["name"]], timeout=30)
+        # 二次确认
+        remaining = list_dataset_snapshots(target_dataset)
+        if remaining:
+            names = ", ".join(item["name"] for item in remaining)
+            raise HTTPException(
+                status_code=500,
+                detail=f"目标 dataset {target_dataset} 仍有 {len(remaining)} 个快照无法清理：{names}",
+            )
+
+    recv_proc = subprocess.Popen(
+        ["zfs", "receive", "-F", target_dataset],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=False,
+    )
+    send_proc = subprocess.Popen(
+        ["zfs", "send", "-i", base_snapshot, source_snapshot],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=False,
+    )
+    assert send_proc.stdout is not None
+    assert recv_proc.stdin is not None
+    try:
+        while True:
+            chunk = send_proc.stdout.read(1024 * 1024)
+            if not chunk:
+                break
+            recv_proc.stdin.write(chunk)
+        recv_proc.stdin.close()
+        send_stderr = send_proc.stderr.read() if send_proc.stderr is not None else b""
+        send_code = send_proc.wait()
+        recv_stderr = recv_proc.stderr.read() if recv_proc.stderr is not None else b""
+        recv_code = recv_proc.wait()
+    finally:
+        if send_proc.stdout is not None:
+            send_proc.stdout.close()
+
+    if send_code != 0:
+        detail = send_stderr.decode("utf-8", errors="ignore").strip() or "zfs send 执行失败"
+        raise HTTPException(status_code=500, detail=detail)
+    if recv_code != 0:
+        detail = recv_stderr.decode("utf-8", errors="ignore").strip() or "zfs receive 执行失败"
+        raise HTTPException(status_code=500, detail=detail)
+
+
+def build_clone_sync_target(source_dataset: str, clone_row: dict, source_snapshot: str) -> dict:
+    target_dataset = clone_row["name"]
+    base_snapshot = clone_row["origin"]
+    if snapshot_dataset_name(base_snapshot) != source_dataset:
+        raise HTTPException(status_code=409, detail=f"Clone {target_dataset} 的 origin 不属于当前源 ZVOL")
+    pipe_zfs_send_receive(base_snapshot, source_snapshot, target_dataset)
+    return {
+        "clone_name": target_dataset,
+        "base_snapshot": base_snapshot,
+        "source_snapshot": source_snapshot,
+        "target_dataset": target_dataset,
+        "status": "success",
+    }
+
+
+def read_snapshot_jobs() -> list[dict]:
+    with snapshot_jobs_lock:
+        jobs = read_json_file(SNAPSHOT_JOBS_FILE, [])
+        return jobs if isinstance(jobs, list) else []
+
+
+def write_snapshot_jobs(jobs: list[dict]) -> None:
+    with snapshot_jobs_lock:
+        atomic_write_json(SNAPSHOT_JOBS_FILE, jobs)
+
+
+def get_snapshot_job(job_id: str) -> dict:
+    for job in read_snapshot_jobs():
+        if job.get("id") == job_id:
+            return job
+    raise HTTPException(status_code=404, detail="定时快照任务不存在")
+
+
+def sanitize_snapshot_job(job: dict) -> dict:
+    interval_minutes = int(job.get("interval_minutes", 0))
+    keep_count = int(job.get("keep_count", 0))
+    if interval_minutes < 1:
+        raise HTTPException(status_code=400, detail="定时快照周期必须大于等于 1 分钟")
+    if keep_count < 1:
+        raise HTTPException(status_code=400, detail="保留数量必须大于等于 1")
+    return {
+        "id": str(job.get("id") or uuid.uuid4().hex),
+        "zvol_name": normalize_zvol_name(job.get("zvol_name", "")),
+        "prefix": normalize_schedule_prefix(job.get("prefix", "auto")),
+        "interval_minutes": interval_minutes,
+        "keep_count": keep_count,
+        "enabled": bool(job.get("enabled", True)),
+        "created_at": str(job.get("created_at") or now_iso()),
+        "updated_at": now_iso(),
+        "last_run_at": str(job.get("last_run_at") or ""),
+        "last_snapshot_name": str(job.get("last_snapshot_name") or ""),
+        "last_error": str(job.get("last_error") or ""),
+        "last_pruned_snapshots": list(job.get("last_pruned_snapshots") or []),
+        "last_skipped_snapshots": list(job.get("last_skipped_snapshots") or []),
+    }
+
+
+def ensure_unique_snapshot_job(job: dict, existing_jobs: list[dict], exclude_job_id: str = "") -> None:
+    for current in existing_jobs:
+        if exclude_job_id and current.get("id") == exclude_job_id:
+            continue
+        if current.get("zvol_name") == job["zvol_name"] and current.get("prefix") == job["prefix"]:
+            raise HTTPException(status_code=409, detail="同一 ZVOL 已存在相同前缀的定时快照计划")
+
+
+def build_snapshot_job_view(job: dict) -> dict:
+    view = dict(job)
+    reference_time = parse_iso_datetime(job["last_run_at"]) if job.get("last_run_at") else parse_iso_datetime(job["created_at"])
+    next_run_at = reference_time + timedelta(minutes=int(job["interval_minutes"]))
+    view["next_run_at"] = next_run_at.isoformat(timespec="seconds")
+    return view
+
+
+def list_snapshot_jobs_view() -> list[dict]:
+    return [build_snapshot_job_view(job) for job in read_snapshot_jobs()]
+
+
+def prune_scheduled_snapshots(zvol_name: str, prefix: str, keep_count: int) -> dict:
+    snapshots = [item["name"] for item in list_dataset_snapshots(zvol_name) if item["name"].startswith(f"{zvol_name}@{prefix}-")]
+    if len(snapshots) <= keep_count:
+        return {"pruned": [], "skipped": []}
+
+    pruned: list[str] = []
+    skipped: list[str] = []
+    for snapshot_name in snapshots[: len(snapshots) - keep_count]:
+        result = destroy_snapshot_impl(snapshot_name, promote_dependent_clones=False)
+        if result["skipped_clones"]:
+            skipped.append(snapshot_name)
+            continue
+        pruned.append(snapshot_name)
+    return {"pruned": pruned, "skipped": skipped}
+
+
+def run_snapshot_job(job_id: str) -> dict:
+    job = get_snapshot_job(job_id)
+    suffix = datetime.now().strftime(SCHEDULE_TIMESTAMP_FORMAT)
+    snapshot_short_name = f"{job['prefix']}-{suffix}"
+    append_log("info", "scheduler", "执行定时快照任务", {"job_id": job_id, "zvol_name": job["zvol_name"], "prefix": job["prefix"]})
+    snapshot_result = create_snapshot_impl(job["zvol_name"], snapshot_short_name)
+    prune_result = prune_scheduled_snapshots(job["zvol_name"], job["prefix"], int(job["keep_count"]))
+
+    jobs = read_snapshot_jobs()
+    updated_jobs: list[dict] = []
+    for current in jobs:
+        if current.get("id") != job_id:
+            updated_jobs.append(current)
+            continue
+        current = dict(current)
+        current["last_run_at"] = now_iso()
+        current["updated_at"] = now_iso()
+        current["last_snapshot_name"] = snapshot_result["snapshot_name"]
+        current["last_error"] = ""
+        current["last_pruned_snapshots"] = prune_result["pruned"]
+        current["last_skipped_snapshots"] = prune_result["skipped"]
+        updated_jobs.append(current)
+        job = current
+    write_snapshot_jobs(updated_jobs)
+    append_log(
+        "info" if not prune_result["skipped"] else "warning",
+        "scheduler",
+        "定时快照任务完成",
+        {
+            "job_id": job_id,
+            "snapshot_name": snapshot_result["snapshot_name"],
+            "pruned": prune_result["pruned"],
+            "skipped": prune_result["skipped"],
+        },
+    )
+    return build_snapshot_job_view(job)
+
+
+def snapshot_jobs_loop() -> None:
+    while True:
+        try:
+            if platform.system().lower() == "linux":
+                jobs = read_snapshot_jobs()
+                now = datetime.now()
+                for job in jobs:
+                    if not job.get("enabled"):
+                        continue
+                    reference_time = parse_iso_datetime(job["last_run_at"]) if job.get("last_run_at") else parse_iso_datetime(job["created_at"])
+                    due_at = reference_time + timedelta(minutes=int(job["interval_minutes"]))
+                    if now < due_at:
+                        continue
+                    try:
+                        run_snapshot_job(job["id"])
+                    except Exception as exc:
+                        append_log("error", "scheduler", "定时快照任务失败", {"job_id": job["id"], "error": str(exc)})
+                        updated_jobs = read_snapshot_jobs()
+                        for current in updated_jobs:
+                            if current.get("id") == job["id"]:
+                                current["last_error"] = str(exc)
+                                current["updated_at"] = now_iso()
+                                current["last_run_at"] = now_iso()
+                        write_snapshot_jobs(updated_jobs)
+        except Exception:
+            pass
+        time.sleep(SCHEDULE_LOOP_INTERVAL)
 
 
 def read_backstores() -> list[dict]:
@@ -347,6 +903,21 @@ def read_lun_backstores(lun_dir: Path) -> list[str]:
     return sorted(backstore_names)
 
 
+def iter_lun_dirs(tpg_dir: Path) -> list[Path]:
+    lun_roots = [tpg_dir / "lun", tpg_dir / "luns"]
+    lun_dirs: list[Path] = []
+    seen: set[Path] = set()
+    for lun_root in lun_roots:
+        if not lun_root.exists():
+            continue
+        for lun_dir in sorted(lun_root.iterdir()):
+            if not lun_dir.is_dir() or lun_dir in seen:
+                continue
+            seen.add(lun_dir)
+            lun_dirs.append(lun_dir)
+    return lun_dirs
+
+
 def read_iscsi_targets() -> list[dict]:
     targets: list[dict] = []
     if not CONFIGFS_ISCSI.exists():
@@ -368,14 +939,10 @@ def read_iscsi_targets() -> list[dict]:
             lun_items = []
             portals: list[dict] = []
             acl_items: list[dict] = []
-            luns_dir = tpg_dir / "luns"
-            if luns_dir.exists():
-                for lun_dir in sorted(luns_dir.iterdir()):
-                    if not lun_dir.is_dir():
-                        continue
-                    linked_backstores = read_lun_backstores(lun_dir)
-                    used_backstores.update(linked_backstores)
-                    lun_items.append({"name": lun_dir.name, "backstores": linked_backstores})
+            for lun_dir in iter_lun_dirs(tpg_dir):
+                linked_backstores = read_lun_backstores(lun_dir)
+                used_backstores.update(linked_backstores)
+                lun_items.append({"name": lun_dir.name, "backstores": linked_backstores})
 
             np_dir = tpg_dir / "np"
             if np_dir.exists():
@@ -492,6 +1059,8 @@ def get_health():
         "commands": commands,
         "backstore_count": len(read_backstores()) if CONFIGFS_TARGET_CORE.exists() else 0,
         "target_count": len(read_iscsi_targets()) if CONFIGFS_ISCSI.exists() else 0,
+        "snapshot_job_count": len(read_snapshot_jobs()),
+        "log_counts": summarize_log_counts(),
     }
 
 
@@ -519,31 +1088,23 @@ def list_pools():
 @app.get("/api/zvols")
 def list_zvols():
     ensure_supported_runtime()
-    output = run_cmd(
-        [
-            "zfs",
-            "list",
-            "-H",
-            "-t",
-            "volume",
-            "-o",
-            "name,volsize,used,refer",
-        ]
-    )
-
+    zvol_rows = list_zvol_rows()
+    rows_by_name = {row["name"]: row for row in zvol_rows}
     backstores = {item["zvol_name"]: item for item in read_backstores()}
     targets = read_iscsi_targets()
     iqn_by_backstore: dict[str, list[str]] = {}
+    clone_names_by_origin: dict[str, list[str]] = {}
     for target in targets:
         for backstore_name in target["backstores"]:
             iqn_by_backstore.setdefault(backstore_name, []).append(target["iqn"])
+    for row in zvol_rows:
+        if row["origin"] and row["origin"] != "-":
+            clone_names_by_origin.setdefault(row["origin"], []).append(row["name"])
 
     zvols = []
-    for line in output.splitlines():
-        parts = line.split("\t")
-        if len(parts) != 4:
-            continue
-        name = parts[0]
+    for row in zvol_rows:
+        name = row["name"]
+        snapshots = list_zvol_snapshots(name, clone_names_by_origin)
         backstore = backstores.get(name)
         target_iqns = []
         if backstore:
@@ -552,14 +1113,20 @@ def list_zvols():
             {
                 "name": name,
                 "device": zvol_device_path(name),
-                "volsize": parts[1],
-                "used": parts[2],
-                "refer": parts[3],
+                "volsize": row["volsize"],
+                "used": row["used"],
+                "refer": row["refer"],
                 "compressratio": get_zfs_property(name, "compressratio"),
                 "volblocksize": get_zfs_property(name, "volblocksize"),
                 "compression": get_zfs_property(name, "compression"),
                 "sync": get_zfs_property(name, "sync"),
                 "refreservation": get_zfs_property(name, "refreservation"),
+                "origin": row["origin"],
+                "is_clone": row["origin"] != "-",
+                "origin_dataset": snapshot_dataset_name(row["origin"]) if row["origin"] != "-" else "",
+                "origin_chain": build_origin_chain(name, rows_by_name),
+                "snapshots": snapshots,
+                "snapshot_count": len(snapshots),
                 "backstore": backstore,
                 "iscsi_targets": target_iqns,
             }
@@ -613,6 +1180,181 @@ def delete_zvol(zvol_name: str):
         raise HTTPException(status_code=409, detail=f"ZVOL 仍绑定 backstore：{names}，请先删除 backstore 或 iSCSI target")
     run_cmd(["zfs", "destroy", full_name], timeout=120)
     return {"message": "ZVOL 删除成功", "zvol_name": full_name}
+
+
+@app.post("/api/zvols/{zvol_name:path}/snapshots")
+def create_zvol_snapshot(zvol_name: str, payload: CreateSnapshotRequest):
+    ensure_supported_runtime()
+    return create_snapshot_impl(zvol_name, payload.snapshot_name)
+
+
+@app.delete("/api/zvol-snapshots/{snapshot_name:path}")
+def delete_zvol_snapshot(snapshot_name: str):
+    ensure_supported_runtime()
+    result = destroy_snapshot_impl(snapshot_name, promote_dependent_clones=True)
+    return {
+        "message": "ZVOL 快照删除成功",
+        "snapshot_name": result["snapshot_name"],
+        "promoted_clones": result["promoted_clones"],
+    }
+
+
+@app.post("/api/zvol-snapshots/{snapshot_name:path}/rollback")
+def rollback_zvol_snapshot(snapshot_name: str):
+    ensure_supported_runtime()
+    full_snapshot_name = normalize_snapshot_name(snapshot_name, "快照名称")
+    run_cmd(["zfs", "rollback", "-r", full_snapshot_name], timeout=120)
+    return {
+        "message": "ZVOL 快照回滚成功",
+        "snapshot_name": full_snapshot_name,
+        "zvol_name": snapshot_dataset_name(full_snapshot_name),
+    }
+
+
+@app.post("/api/zvol-snapshots/{snapshot_name:path}/reverse-sync")
+def reverse_sync_zvol_snapshot(snapshot_name: str, payload: ReverseSyncSnapshotRequest):
+    ensure_supported_runtime()
+    full_snapshot_name = normalize_snapshot_name(snapshot_name, "快照名称")
+    source_dataset = snapshot_dataset_name(full_snapshot_name)
+    source_row = get_zvol_row_by_name(source_dataset)
+    origin_snapshot = source_row.get("origin") or "-"
+    if origin_snapshot == "-":
+        raise HTTPException(status_code=409, detail="当前快照所属 ZVOL 不是 clone，无法执行增量反向同步")
+
+    target_dataset = snapshot_dataset_name(origin_snapshot)
+    get_zvol_row_by_name(target_dataset)
+    base_snapshot = normalize_snapshot_name(payload.base_snapshot, "增量基线快照") if payload.base_snapshot else origin_snapshot
+    if snapshot_dataset_name(base_snapshot) != target_dataset:
+        raise HTTPException(status_code=400, detail="所选增量基线快照不属于 origin 数据集")
+    pipe_zfs_send_receive(base_snapshot, full_snapshot_name, target_dataset)
+
+    return {
+        "message": "增量反向同步成功",
+        "base_snapshot": base_snapshot,
+        "source_snapshot": full_snapshot_name,
+        "target_dataset": target_dataset,
+    }
+
+
+@app.post("/api/zvol-snapshots/{snapshot_name:path}/sync-to-clones")
+def sync_origin_snapshot_to_clones(snapshot_name: str, payload: SyncOriginSnapshotRequest):
+    ensure_supported_runtime()
+    source_snapshot = normalize_snapshot_name(snapshot_name, "快照名称")
+    source_dataset = snapshot_dataset_name(source_snapshot)
+    source_row = get_zvol_row_by_name(source_dataset)
+    if source_row.get("origin") and source_row.get("origin") != "-":
+        raise HTTPException(status_code=409, detail="只有 origin ZVOL 的快照才支持同步到 clone")
+
+    requested_clone_names = {normalize_zvol_name(item) for item in payload.clone_names}
+    candidates = [
+        row for row in list_zvol_rows()
+        if row.get("origin") and row["origin"] != "-" and snapshot_dataset_name(row["origin"]) == source_dataset
+    ]
+    if requested_clone_names:
+        candidates = [row for row in candidates if row["name"] in requested_clone_names]
+    if not candidates:
+        raise HTTPException(status_code=404, detail="当前快照没有可同步的 clone")
+
+    results: list[dict] = []
+    failures: list[dict] = []
+    for clone_row in candidates:
+        try:
+            results.append(build_clone_sync_target(source_dataset, clone_row, source_snapshot))
+        except HTTPException as exc:
+            failures.append(
+                {
+                    "clone_name": clone_row["name"],
+                    "status": "failed",
+                    "detail": exc.detail,
+                }
+            )
+    return {
+        "message": "origin 增量同步已执行",
+        "source_snapshot": source_snapshot,
+        "results": results,
+        "failures": failures,
+    }
+
+
+@app.post("/api/zvols/clones")
+def clone_zvol(payload: CloneZvolRequest):
+    ensure_supported_runtime()
+    source_snapshot = normalize_snapshot_name(payload.snapshot_name, "源快照")
+    pool = require_safe_name(payload.pool, "存储池名称")
+    parent_dataset = require_safe_dataset(payload.parent_dataset, "父数据集")
+    clone_name = require_safe_name(payload.name, "克隆名称")
+    target_parent = f"{pool}/{parent_dataset}"
+    target_name = f"{target_parent}/{clone_name}"
+
+    ensure_parent_dataset(target_parent)
+    run_cmd(["zfs", "clone", source_snapshot, target_name], timeout=120)
+    return {
+        "message": "ZVOL 克隆创建成功",
+        "source_snapshot": source_snapshot,
+        "zvol_name": target_name,
+        "device": zvol_device_path(target_name),
+    }
+
+
+@app.get("/api/snapshot-jobs")
+def list_snapshot_jobs():
+    ensure_supported_runtime()
+    return {"jobs": list_snapshot_jobs_view()}
+
+
+@app.get("/api/logs")
+def list_logs(
+    level: str = Query(default=""),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    return {
+        "logs": read_logs(level=level, limit=limit),
+        "counts": summarize_log_counts(),
+        "levels": ["debug", "info", "warning", "error"],
+    }
+
+
+@app.post("/api/snapshot-jobs")
+def create_snapshot_job(payload: SnapshotScheduleRequest):
+    ensure_supported_runtime()
+    jobs = read_snapshot_jobs()
+    job = sanitize_snapshot_job(payload.model_dump())
+    ensure_unique_snapshot_job(job, jobs)
+    jobs.append(job)
+    write_snapshot_jobs(jobs)
+    return {"message": "定时快照任务创建成功", "job": build_snapshot_job_view(job)}
+
+
+@app.put("/api/snapshot-jobs/{job_id}")
+def update_snapshot_job(job_id: str, payload: SnapshotScheduleRequest):
+    ensure_supported_runtime()
+    jobs = read_snapshot_jobs()
+    updated_job: Optional[dict] = None
+    for index, current in enumerate(jobs):
+        if current.get("id") != job_id:
+            continue
+        merged = dict(current)
+        merged.update(payload.model_dump())
+        merged["id"] = job_id
+        updated_job = sanitize_snapshot_job(merged)
+        ensure_unique_snapshot_job(updated_job, jobs, exclude_job_id=job_id)
+        jobs[index] = updated_job
+        break
+    if not updated_job:
+        raise HTTPException(status_code=404, detail="定时快照任务不存在")
+    write_snapshot_jobs(jobs)
+    return {"message": "定时快照任务已更新", "job": build_snapshot_job_view(updated_job)}
+
+
+@app.delete("/api/snapshot-jobs/{job_id}")
+def delete_snapshot_job(job_id: str):
+    ensure_supported_runtime()
+    jobs = read_snapshot_jobs()
+    remaining = [job for job in jobs if job.get("id") != job_id]
+    if len(remaining) == len(jobs):
+        raise HTTPException(status_code=404, detail="定时快照任务不存在")
+    write_snapshot_jobs(remaining)
+    return {"message": "定时快照任务已删除", "job_id": job_id}
 
 
 @app.get("/api/backstores")
@@ -712,7 +1454,10 @@ def create_iscsi_lun(iqn: str, payload: CreateIscsiLunRequest):
         timeout=120,
     )
     targetcli_saveconfig()
-    return {"message": "LUN 创建成功", "target": get_target(iqn), "backstore_name": backstore_name}
+    updated_target = get_target(iqn)
+    if not updated_target or backstore_name not in updated_target["backstores"]:
+        raise HTTPException(status_code=500, detail="LUN 创建命令已执行，但重新扫描 target 状态时未发现该 backstore")
+    return {"message": "LUN 创建成功", "target": updated_target, "backstore_name": backstore_name}
 
 
 @app.delete("/api/iscsi/targets/{iqn}")
@@ -875,6 +1620,17 @@ def update_iscsi_acl_chap(iqn: str, initiator_iqn: str, payload: AclChapRequest)
     )
     targetcli_saveconfig()
     return {"message": "ACL CHAP 已更新", "target": get_target(iqn)}
+
+
+@app.on_event("startup")
+def startup_snapshot_jobs_worker():
+    global snapshot_jobs_started
+    ensure_state_dir()
+    if snapshot_jobs_started:
+        return
+    worker = threading.Thread(target=snapshot_jobs_loop, name="snapshot-jobs-worker", daemon=True)
+    worker.start()
+    snapshot_jobs_started = True
 
 
 @app.get("/")

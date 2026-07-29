@@ -6,45 +6,44 @@
   <title>ZVOL Manager</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <style>
+    :root {
+      --bg: #090d14;
+      --bg-elevated: #101722;
+      --panel: #0f1725;
+      --panel-strong: #131f31;
+      --panel-soft: #16243a;
+      --line: rgba(123, 160, 215, 0.16);
+      --line-strong: rgba(123, 160, 215, 0.28);
+      --text: #edf3ff;
+      --text-muted: #8ea5ca;
+      --text-soft: #6f88ad;
+      --accent: #69a7ff;
+      --accent-strong: #3f84ff;
+      --success: #49cf8f;
+      --warn: #ff8b7d;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
+      min-height: 100vh;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0b1220;
-      color: #dbe6f5;
+      background:
+        radial-gradient(circle at top left, rgba(85, 127, 193, 0.18), transparent 30%),
+        radial-gradient(circle at top right, rgba(64, 91, 135, 0.18), transparent 24%),
+        linear-gradient(180deg, #080c13 0%, #0a1019 100%);
+      color: var(--text);
+      text-wrap: pretty;
     }
     .shell {
-      max-width: 1400px;
+      width: min(1480px, 100%);
       margin: 0 auto;
-      padding: 24px;
-    }
-    .hero {
-      background: linear-gradient(135deg, #111c31 0%, #162743 100%);
-      border: 1px solid #223554;
-      border-radius: 20px;
-      padding: 24px;
-      margin-bottom: 20px;
-    }
-    .hero h1 {
-      margin: 0 0 10px;
-      font-size: 28px;
-    }
-    .hero p {
-      margin: 0;
-      color: #9fb2cf;
-      line-height: 1.8;
+      padding: 28px;
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 16px;
-    }
-    .card {
-      background: #111c31;
-      border: 1px solid #223554;
-      border-radius: 18px;
-      padding: 18px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 18px;
     }
     .col-4 { grid-column: span 4; }
     .col-5 { grid-column: span 5; }
@@ -52,35 +51,265 @@
     .col-7 { grid-column: span 7; }
     .col-8 { grid-column: span 8; }
     .col-12 { grid-column: span 12; }
-    h2 {
-      margin: 0 0 14px;
-      font-size: 18px;
+    .card {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 22%),
+        linear-gradient(180deg, var(--panel-strong) 0%, var(--panel) 100%);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
     }
-    .muted {
-      color: #8da3c4;
-      font-size: 14px;
-    }
-    .kv {
+    .page-header {
       display: grid;
-      grid-template-columns: 120px 1fr;
-      gap: 10px;
-      font-size: 14px;
-      margin: 8px 0;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: end;
+      padding: 24px 26px;
+      margin-bottom: 18px;
     }
-    .kv .key { color: #8da3c4; }
-    .badge {
+    .eyebrow {
       display: inline-flex;
       align-items: center;
-      padding: 4px 10px;
+      gap: 8px;
+      padding: 6px 12px;
       border-radius: 999px;
+      background: rgba(105, 167, 255, 0.1);
+      border: 1px solid rgba(105, 167, 255, 0.16);
+      color: #b8d6ff;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 16px rgba(105, 167, 255, 0.72);
+    }
+    .page-header h1 {
+      margin: 16px 0 10px;
+      font-size: clamp(30px, 4vw, 42px);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+    .page-header p {
+      margin: 0;
+      max-width: 760px;
+      color: var(--text-muted);
+      line-height: 1.75;
+    }
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    h2 {
+      margin: 0;
+      font-size: 19px;
+      letter-spacing: -0.02em;
+    }
+    .muted {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .status-card {
+      padding: 16px 18px;
+      min-height: 132px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .status-card h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .status-value {
+      font-size: clamp(26px, 4vw, 34px);
+      line-height: 1;
+      letter-spacing: -0.05em;
+      font-weight: 700;
+    }
+    .status-foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 18px;
+      color: var(--text-soft);
+      font-size: 13px;
+    }
+    .section-card {
+      padding: 18px;
+    }
+    .section-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .section-header p {
+      margin: 8px 0 0;
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+    .section-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid rgba(123, 160, 215, 0.1);
+      border-radius: 20px;
+      background: rgba(7, 12, 20, 0.44);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th,
+    td {
+      padding: 16px 14px;
+      border-bottom: 1px solid rgba(123, 160, 215, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+    tbody tr {
+      transition: background 160ms ease, transform 160ms ease;
+    }
+    tbody tr:hover {
+      background: rgba(105, 167, 255, 0.04);
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: rgba(15, 23, 37, 0.96);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      color: var(--text-soft);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      z-index: 1;
+    }
+    .cell-stack {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .filters-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+    .filters-row .field {
+      margin: 0;
+      min-width: 180px;
+      flex: 0 1 220px;
+    }
+    .log-entry {
+      display: grid;
+      gap: 6px;
+      min-width: 320px;
+    }
+    .log-message {
+      color: var(--text);
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .log-details {
+      margin: 0;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(6, 12, 20, 0.6);
+      border: 1px solid rgba(123, 160, 215, 0.1);
+      color: var(--text-soft);
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .row-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .row-subtitle,
+    .cell-line,
+    .meta-line {
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .truncate {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .status-group,
+    .tag-row,
+    .inline-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .badge,
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(123, 160, 215, 0.14);
+      background: rgba(255, 255, 255, 0.02);
+      color: #c9defc;
       font-size: 12px;
       font-weight: 600;
-      background: rgba(74, 222, 128, 0.12);
-      color: #8df0ac;
     }
-    .badge.badge-warn {
-      background: rgba(248, 113, 113, 0.12);
-      color: #f4a1a1;
+    .badge-success {
+      border-color: rgba(73, 207, 143, 0.18);
+      background: rgba(73, 207, 143, 0.12);
+      color: #9df0c2;
+    }
+    .badge-warn {
+      border-color: rgba(255, 139, 125, 0.18);
+      background: rgba(255, 139, 125, 0.12);
+      color: #ffbcaf;
+    }
+    .badge-neutral {
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.04);
     }
     .field {
       margin-bottom: 12px;
@@ -88,80 +317,77 @@
     .field label {
       display: block;
       margin-bottom: 6px;
-      color: #8da3c4;
+      color: var(--text-muted);
       font-size: 13px;
     }
     .field input,
     .field select {
       width: 100%;
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid #2a4268;
-      background: #0d1729;
-      color: #dbe6f5;
+      padding: 11px 13px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(7, 12, 20, 0.72);
+      color: var(--text);
       outline: none;
+      transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
     }
     .field input:focus,
     .field select:focus {
-      border-color: #4f8cff;
+      border-color: rgba(105, 167, 255, 0.48);
+      box-shadow: 0 0 0 4px rgba(105, 167, 255, 0.1);
+      background: rgba(9, 16, 27, 0.95);
     }
     .checkbox {
       display: flex;
       align-items: center;
       gap: 8px;
       margin-top: 8px;
-      color: #9fb2cf;
+      color: var(--text-muted);
       font-size: 14px;
     }
     button {
       border: 0;
-      border-radius: 12px;
-      padding: 10px 16px;
-      font-weight: 600;
+      border-radius: 14px;
+      padding: 10px 15px;
+      font-weight: 700;
+      line-height: 1;
       cursor: pointer;
-      background: #3b82f6;
+      background: linear-gradient(180deg, #5798ff 0%, #3d7eff 100%);
       color: white;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      transition: transform 140ms ease, filter 140ms ease, opacity 140ms ease;
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
     }
     button.secondary {
-      background: #223554;
-      color: #dbe6f5;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+      color: var(--text);
+      border: 1px solid rgba(123, 160, 215, 0.14);
+      box-shadow: none;
     }
     button.danger {
-      background: #dc2626;
+      background: linear-gradient(180deg, #ff816f 0%, #f05e54 100%);
+      color: white;
+    }
+    button.ghost {
+      padding: 9px 13px;
+      font-size: 13px;
     }
     button:disabled {
-      opacity: 0.55;
+      opacity: 0.5;
       cursor: not-allowed;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-    th, td {
-      padding: 12px 10px;
-      border-bottom: 1px solid #1f304c;
-      text-align: left;
-      vertical-align: top;
-    }
-    th {
-      color: #8da3c4;
-      font-weight: 600;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .inline-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+      transform: none;
+      filter: none;
     }
     .hint {
-      margin-top: 10px;
-      padding: 12px 14px;
-      border-radius: 12px;
-      background: rgba(59, 130, 246, 0.08);
-      color: #aecdff;
+      margin-top: 12px;
+      padding: 13px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(105, 167, 255, 0.14);
+      background: rgba(105, 167, 255, 0.06);
+      color: #bad6ff;
       font-size: 13px;
       line-height: 1.7;
     }
@@ -169,51 +395,29 @@
       position: fixed;
       top: 20px;
       right: 20px;
-      padding: 12px 16px;
-      background: #111c31;
-      border: 1px solid #2a4268;
-      border-radius: 14px;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+      min-width: 220px;
+      max-width: 360px;
+      padding: 14px 16px;
+      background: rgba(12, 18, 29, 0.96);
+      border: 1px solid var(--line-strong);
+      border-radius: 16px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
       z-index: 40;
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
     }
-    .toast.error { border-color: #7f1d1d; color: #ffc6c6; }
-    .toast.success { border-color: #14532d; color: #b8ffd1; }
-    .toast.warning {
-      background: #24130f;
-      border-color: #9a3412;
-      color: #ffd3b2;
+    .toast.error { border-color: rgba(255, 139, 125, 0.32); color: #ffd2cb; }
+    .toast.success { border-color: rgba(73, 207, 143, 0.28); color: #d6ffe8; }
+    .toast.warning { border-color: rgba(255, 162, 90, 0.3); color: #ffe0c4; }
+    .small {
+      font-size: 12px;
+      color: var(--text-soft);
+      line-height: 1.6;
     }
-    .mt14 { margin-top: 14px; }
-    .small { font-size: 12px; color: #8da3c4; }
-    .tag-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-    }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: #0d1729;
-      border: 1px solid #2a4268;
-      font-size: 13px;
-    }
-    .pill button {
-      padding: 4px 8px;
-      border-radius: 999px;
-      font-size: 11px;
-    }
-    .action-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 14px;
-    }
-    .action-grid button {
-      min-width: 140px;
+    .section-empty {
+      padding: 28px 20px;
+      color: var(--text-soft);
+      text-align: center;
     }
     .modal-backdrop {
       position: fixed;
@@ -222,7 +426,8 @@
       align-items: flex-start;
       justify-content: center;
       padding: 28px 20px;
-      background: rgba(3, 8, 18, 0.72);
+      background: rgba(3, 7, 13, 0.76);
+      -webkit-backdrop-filter: blur(14px);
       backdrop-filter: blur(14px);
       z-index: 30;
     }
@@ -230,11 +435,11 @@
       width: min(760px, 100%);
       max-height: calc(100vh - 56px);
       overflow: auto;
-      background: rgba(17, 28, 49, 0.96);
-      border: 1px solid #223554;
-      border-radius: 24px;
-      padding: 20px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.36);
+      background: linear-gradient(180deg, rgba(19, 31, 49, 0.98) 0%, rgba(13, 21, 34, 0.98) 100%);
+      border: 1px solid var(--line-strong);
+      border-radius: 26px;
+      padding: 22px;
+      box-shadow: 0 30px 70px rgba(0, 0, 0, 0.42);
     }
     .modal-panel-wide {
       width: min(1180px, 100%);
@@ -259,26 +464,48 @@
       align-items: center;
       justify-content: center;
       padding: 20px;
-      background: rgba(3, 8, 18, 0.6);
+      background: rgba(3, 8, 18, 0.7);
+      -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       z-index: 50;
     }
     .confirm-panel {
-      width: min(480px, 100%);
-      background: rgba(17, 28, 49, 0.98);
-      border: 1px solid #223554;
-      border-radius: 22px;
+      width: min(500px, 100%);
+      background: linear-gradient(180deg, rgba(19, 31, 49, 0.98) 0%, rgba(13, 21, 34, 0.98) 100%);
+      border: 1px solid var(--line-strong);
+      border-radius: 24px;
       padding: 20px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.38);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
     }
     .confirm-message {
-      color: #b7c7df;
-      line-height: 1.7;
+      color: #c4d5ef;
+      line-height: 1.75;
       margin: 0 0 18px;
       white-space: pre-wrap;
     }
+    .mt14 { margin-top: 14px; }
+    @media (max-width: 1180px) {
+      .overview-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
     @media (max-width: 960px) {
-      .col-4, .col-5, .col-6, .col-7, .col-8, .col-12 { grid-column: span 12; }
+      .shell {
+        padding: 16px;
+      }
+      .col-4, .col-5, .col-6, .col-7, .col-8, .col-12 {
+        grid-column: span 12;
+      }
+      .page-header {
+        grid-template-columns: 1fr;
+      }
+      .header-actions,
+      .section-actions {
+        justify-content: flex-start;
+      }
+      .overview-grid {
+        grid-template-columns: 1fr;
+      }
       .modal-backdrop {
         padding: 12px;
       }
@@ -286,207 +513,456 @@
         max-height: calc(100vh - 24px);
         padding: 16px;
       }
+      th,
+      td {
+        padding: 14px 12px;
+      }
     }
   </style>
 </head>
-<body>
-  <div id="app" class="shell">
-    <div class="hero">
-      <h1>ZVOL Manager</h1>
-      <p>主页面只保留状态和列表；所有创建、挂载、认证和 Target 配置都通过弹窗完成，避免设置区常驻页面造成误操作。</p>
-    </div>
-
-    <div v-if="toast" class="toast" :class="toast.type">{{ toast.message }}</div>
-
-    <div class="grid">
-      <section class="card col-4">
-        <h2>环境诊断</h2>
-        <div class="kv"><div class="key">系统</div><div>{{ health.system || '-' }}</div></div>
-        <div class="kv"><div class="key">平台</div><div>{{ health.platform || '-' }}</div></div>
-        <div class="kv"><div class="key">Linux 支持</div><div><span class="badge" :class="{'badge-warn': !health.linux_supported}">{{ health.linux_supported ? '可用' : '不可用' }}</span></div></div>
-        <div class="kv"><div class="key">ConfigFS</div><div><span class="badge" :class="{'badge-warn': !health.configfs_target_exists}">{{ health.configfs_target_exists ? '存在' : '缺失' }}</span></div></div>
-        <div class="kv"><div class="key">Backstore 数</div><div>{{ health.backstore_count || 0 }}</div></div>
-        <div class="kv"><div class="key">Target 数</div><div>{{ health.target_count || 0 }}</div></div>
-        <div class="kv" v-for="(value, key) in health.commands || {}" :key="key">
-          <div class="key">{{ key }}</div>
-          <div>{{ value.available ? '已检测' : '缺失' }}</div>
+  <body>
+    <div id="app" class="shell">
+      <header class="page-header card">
+        <div>
+          <span class="eyebrow">FNOS ZVOL Manager</span>
+          <h1>FNOS ZVOL Manager</h1>
+          <p>用于管理 ZFS ZVOL、快照、克隆、Backstore 与 iSCSI Target，统一查看卷状态、导出关系和后端绑定信息。</p>
         </div>
-        <div class="hint">如果这里显示 macOS 或 Linux 不可用，说明当前只是开发环境。真正的 ZFS、targetcli、LIO 验证要在 fnOS 机器上完成。</div>
-      </section>
-
-      <section class="card col-8">
-        <h2>快捷操作</h2>
-        <div class="muted">创建和设置都改为弹窗；列表页只承担查看和触发入口。</div>
-        <div class="action-grid">
-          <button type="button" @click="openCreateZvolModal" :disabled="busy">创建 ZVOL</button>
-          <button type="button" @click="openCreateTargetModal" :disabled="busy">创建 Target</button>
-          <button type="button" @click="openCreateLunModal()" :disabled="busy || !targets.length || !availableLunBackstores.length">创建 LUN</button>
-          <button type="button" class="secondary" @click="openTargetConfigModal()" :disabled="busy || !targets.length">配置 Target</button>
-          <button type="button" class="secondary" @click="loadAll" :disabled="busy">刷新列表</button>
+        <div class="header-actions">
+          <button type="button" class="secondary" @click="loadAll" :disabled="busy">刷新数据</button>
         </div>
-        <div class="hint">
-          <div>Target 的 Portal、ACL、CHAP 和认证参数都在同一个配置弹窗里处理。</div>
-          <div>如果要把 ZVOL 导出为 LUN，先给它创建 Backstore，再在弹窗中选择目标 Target 挂载。</div>
-        </div>
-        <div class="field mt14">
-          <label>当前选中的 Target</label>
-          <select v-model="selectedTargetIqn" title="选择 Target">
-            <option value="">请选择 Target</option>
-            <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ target.iqn }}</option>
-          </select>
-        </div>
+      </header>
+
+      <div v-if="toast" class="toast" :class="toast.type">{{ toast.message }}</div>
+
+      <section class="overview-grid">
+        <article class="card status-card">
+          <div>
+            <h3>运行环境</h3>
+            <div class="status-value">{{ health.system || '-' }}</div>
+          </div>
+          <div class="status-foot">
+            <span class="badge" :class="health.linux_supported ? 'badge-success' : 'badge-warn'">{{ health.linux_supported ? 'Linux 可用' : 'Linux 不可用' }}</span>
+            <span class="pill">{{ health.platform || '-' }}</span>
+          </div>
+        </article>
+        <article class="card status-card">
+          <div>
+            <h3>ConfigFS / LIO</h3>
+            <div class="status-value">{{ health.configfs_target_exists ? '已连接' : '缺失' }}</div>
+          </div>
+          <div class="status-foot">
+            <span class="badge" :class="health.configfs_target_exists ? 'badge-success' : 'badge-warn'">{{ health.configfs_target_exists ? '/sys/kernel/config/target' : '等待 fnOS 环境' }}</span>
+          </div>
+        </article>
+        <article class="card status-card">
+          <div>
+            <h3>Backstore</h3>
+            <div class="status-value">{{ health.backstore_count || 0 }}</div>
+          </div>
+          <div class="status-foot">
+            <span class="pill">已注册块后端</span>
+          </div>
+        </article>
+        <article class="card status-card">
+          <div>
+            <h3>Target</h3>
+            <div class="status-value">{{ health.target_count || 0 }}</div>
+          </div>
+          <div class="status-foot">
+            <span class="pill" v-for="(value, key) in health.commands || {}" :key="key">{{ key }} {{ value.available ? '已检测' : '缺失' }}</span>
+          </div>
+        </article>
       </section>
 
-      <section class="card col-12">
-        <h2>ZVOL 列表</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>设备</th>
-              <th>容量</th>
-              <th>块大小</th>
-              <th>压缩</th>
-              <th>sync</th>
-              <th>Backstore</th>
-              <th>Target</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="zvols.length === 0">
-              <td colspan="9" class="muted">暂无 ZVOL</td>
-            </tr>
-            <tr v-for="item in zvols" :key="item.name">
-              <td>{{ item.name }}</td>
-              <td>{{ item.device }}</td>
-              <td>{{ item.volsize }}</td>
-              <td>{{ item.volblocksize }}</td>
-              <td>{{ item.compression }}</td>
-              <td>{{ item.sync }}</td>
-              <td>{{ item.backstore ? item.backstore.name : '未绑定' }}</td>
-              <td>{{ item.iscsi_targets && item.iscsi_targets.length ? item.iscsi_targets.join(', ') : '未导出' }}</td>
-              <td>
-                <div class="inline-actions">
-                  <button
-                    v-if="!item.backstore"
-                    type="button"
-                    class="secondary"
-                    @click="openBackstoreModal(item.name)"
-                    :disabled="busy"
-                  >
-                    创建 Backstore
-                  </button>
-                  <button
-                    v-else
-                    type="button"
-                    class="secondary"
-                    @click="openCreateLunModal({ backstoreName: item.backstore.name, iqn: item.iscsi_targets && item.iscsi_targets.length === 1 ? item.iscsi_targets[0] : '' })"
-                    :disabled="busy || item.iscsi_targets && item.iscsi_targets.length > 0"
-                  >
-                    挂载为 LUN
-                  </button>
-                  <button
-                    v-if="item.backstore"
-                    type="button"
-                    class="danger"
-                    @click="deleteBackstore(item.backstore.name)"
-                    :disabled="busy || (item.iscsi_targets && item.iscsi_targets.length > 0)"
-                  >
-                    删除 Backstore
-                  </button>
-                  <button type="button" class="danger" @click="deleteZvol(item.name)" :disabled="busy || !!item.backstore">删除 ZVOL</button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+      <div class="grid">
+        <section class="card section-card col-12">
+          <div class="section-header">
+            <div>
+              <h2>ZVOL</h2>
+              <p>管理 ZFS 卷与快照，查看容量、导出状态，并发起克隆与导出相关操作。</p>
+            </div>
+            <div class="section-actions">
+              <button type="button" @click="openCreateZvolModal" :disabled="busy">新建 ZVOL</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 26%;">卷</th>
+                  <th style="width: 22%;">规格</th>
+                  <th style="width: 26%;">导出状态</th>
+                  <th style="width: 26%;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="baseZvols.length === 0">
+                  <td colspan="4" class="section-empty">暂无 ZVOL</td>
+                </tr>
+                <tr v-for="item in baseZvols" :key="item.name">
+                  <td>
+                    <div class="cell-stack">
+                      <div class="row-title truncate" :title="item.name">{{ shortDatasetName(item.name) }}</div>
+                      <div class="row-subtitle truncate mono" :title="item.name">{{ item.name }}</div>
+                      <div class="meta-line truncate" :title="item.device">{{ compactDevicePath(item.device) }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="status-group">
+                        <span class="pill">{{ item.volsize }}</span>
+                        <span class="pill">{{ item.volblocksize }}</span>
+                        <span class="pill">快照 {{ item.snapshot_count || 0 }}</span>
+                      </div>
+                      <div class="cell-line">used {{ item.used || '-' }}</div>
+                      <div class="cell-line">referenced {{ item.refer || '-' }}</div>
+                      <div class="cell-line">压缩 {{ item.compression || '-' }}</div>
+                      <div class="cell-line">sync {{ item.sync || '-' }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="status-group">
+                        <span class="badge" :class="item.backstore ? 'badge-success' : 'badge-neutral'">{{ item.backstore ? 'Backstore 已创建' : '未绑定 Backstore' }}</span>
+                        <span class="badge" :class="item.iscsi_targets && item.iscsi_targets.length ? 'badge-success' : 'badge-neutral'">{{ item.iscsi_targets && item.iscsi_targets.length ? '已导出' : '未导出' }}</span>
+                      </div>
+                      <div v-if="item.backstore" class="cell-line truncate mono" :title="item.backstore.name">Backstore {{ item.backstore.name }}</div>
+                      <div class="cell-line truncate" :title="formatTargetNames(item.iscsi_targets)">{{ formatTargetNames(item.iscsi_targets) }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="inline-actions">
+                      <button
+                        v-if="!item.backstore"
+                        type="button"
+                        class="secondary ghost"
+                        @click="openBackstoreModal(item.name)"
+                        :disabled="busy"
+                      >
+                        创建 Backstore
+                      </button>
+                      <button
+                        v-else
+                        type="button"
+                        class="secondary ghost"
+                        @click="openCreateLunModal({ backstoreName: item.backstore.name, iqn: item.iscsi_targets && item.iscsi_targets.length === 1 ? item.iscsi_targets[0] : '' })"
+                        :disabled="busy || item.iscsi_targets && item.iscsi_targets.length > 0"
+                      >
+                        挂载 LUN
+                      </button>
+                      <button
+                        v-if="item.backstore"
+                        type="button"
+                        class="danger ghost"
+                        @click="deleteBackstore(item.backstore.name)"
+                        :disabled="busy || (item.iscsi_targets && item.iscsi_targets.length > 0)"
+                      >
+                        删除 Backstore
+                      </button>
+                      <button type="button" class="secondary ghost" @click="openSnapshotModal(item)" :disabled="busy">创建快照</button>
+                      <button type="button" class="secondary ghost" @click="openCloneModal(item)" :disabled="busy || !(item.snapshots && item.snapshots.length)">克隆</button>
+                      <button type="button" class="danger ghost" @click="deleteZvol(item.name)" :disabled="busy || !!item.backstore">删除 ZVOL</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      <section class="card col-12">
-        <h2>iSCSI Target 列表</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>IQN</th>
-              <th>ZVOL</th>
-              <th>Backstore</th>
-              <th>LUN</th>
-              <th>Portal</th>
-              <th>ACL</th>
-              <th>认证</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="targets.length === 0">
-              <td colspan="8" class="muted">暂无 Target</td>
-            </tr>
-            <tr v-for="target in targets" :key="target.iqn">
-              <td>{{ target.iqn }}</td>
-              <td>{{ target.zvol_names && target.zvol_names.length ? target.zvol_names.join(', ') : '-' }}</td>
-              <td>{{ target.backstores && target.backstores.length ? target.backstores.join(', ') : '-' }}</td>
-              <td>{{ formatTargetLuns(target) }}</td>
-              <td>{{ target.portals && target.portals.length ? target.portals.join(', ') : '未配置' }}</td>
-              <td>{{ target.acl_names && target.acl_names.length ? target.acl_names.join(', ') : '未配置' }}</td>
-              <td>{{ target.settings && target.settings.authentication ? 'CHAP 已启用' : '未启用' }}</td>
-              <td>
-                <div class="inline-actions">
-                  <button type="button" class="secondary" @click="openTargetConfigModal(target)" :disabled="busy">配置</button>
-                  <button
-                    type="button"
-                    class="secondary"
-                    @click="openCreateLunModal({ iqn: target.iqn, tpg: target.settings ? parseTpgValue(target.settings.tpg) : 1 })"
-                    :disabled="busy || !availableLunBackstores.length"
-                  >
-                    添加 LUN
-                  </button>
-                  <button type="button" class="danger" @click="deleteTarget(target.iqn, false)" :disabled="busy">删除 Target</button>
-                  <button type="button" class="danger" @click="deleteTarget(target.iqn, true)" :disabled="busy">删 Target+Backstore</button>
-                </div>
-                <div class="small">会保留 ZVOL，本应用不自动销毁卷。</div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+        <section class="card section-card col-12">
+          <div class="section-header">
+            <div>
+              <h2>克隆卷</h2>
+              <p>查看由快照创建的克隆卷，包含来源关系与空间占用信息。</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 26%;">克隆卷</th>
+                  <th style="width: 26%;">来源</th>
+                  <th style="width: 24%;">空间</th>
+                  <th style="width: 24%;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="cloneZvols.length === 0">
+                  <td colspan="4" class="section-empty">暂无克隆卷</td>
+                </tr>
+                <tr v-for="item in cloneZvols" :key="item.name">
+                  <td>
+                    <div class="cell-stack">
+                      <div class="row-title truncate" :title="item.name">{{ shortDatasetName(item.name) }}</div>
+                      <div class="row-subtitle truncate mono" :title="item.name">{{ item.name }}</div>
+                      <div class="meta-line truncate" :title="item.device">{{ compactDevicePath(item.device) }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="cell-line truncate mono" :title="item.origin">{{ item.origin || '-' }}</div>
+                      <div class="cell-line">源快照 {{ shortSnapshotName(item.origin) }}</div>
+                      <div v-if="item.origin_chain && item.origin_chain.length" class="cell-line truncate" :title="formatOriginChain(item.origin_chain)">链路 {{ formatOriginChain(item.origin_chain) }}</div>
+                      <div class="status-group">
+                        <span class="badge" :class="item.backstore ? 'badge-success' : 'badge-neutral'">{{ item.backstore ? 'Backstore 已创建' : '未绑定 Backstore' }}</span>
+                        <span class="badge" :class="item.iscsi_targets && item.iscsi_targets.length ? 'badge-success' : 'badge-neutral'">{{ item.iscsi_targets && item.iscsi_targets.length ? '已导出' : '未导出' }}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="cell-line">volsize {{ item.volsize || '-' }}</div>
+                      <div class="cell-line">used {{ item.used || '-' }}</div>
+                      <div class="cell-line">referenced {{ item.refer || '-' }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="inline-actions">
+                      <button
+                        v-if="!item.backstore"
+                        type="button"
+                        class="secondary ghost"
+                        @click="openBackstoreModal(item.name)"
+                        :disabled="busy"
+                      >
+                        创建 Backstore
+                      </button>
+                      <button
+                        v-else
+                        type="button"
+                        class="secondary ghost"
+                        @click="openCreateLunModal({ backstoreName: item.backstore.name, iqn: item.iscsi_targets && item.iscsi_targets.length === 1 ? item.iscsi_targets[0] : '' })"
+                        :disabled="busy || item.iscsi_targets && item.iscsi_targets.length > 0"
+                      >
+                        挂载 LUN
+                      </button>
+                      <button type="button" class="secondary ghost" @click="openSnapshotModal(item)" :disabled="busy">快照管理</button>
+                      <button type="button" class="danger ghost" @click="deleteZvol(item.name)" :disabled="busy || !!item.backstore">删除克隆</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      <section class="card col-12">
-        <h2>Backstore 列表</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>ZVOL</th>
-              <th>设备</th>
-              <th>iblock 组</th>
-              <th>启用</th>
-              <th>被 Target 使用</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="backstores.length === 0">
-              <td colspan="6" class="muted">暂无 Backstore</td>
-            </tr>
-            <tr v-for="item in backstores" :key="item.name">
-              <td>{{ item.name }}</td>
-              <td>{{ item.zvol_name || '-' }}</td>
-              <td>{{ item.device || '-' }}</td>
-              <td>{{ item.iblock_group }}</td>
-              <td>{{ item.enabled ? '是' : '否' }}</td>
-              <td>{{ item.in_use ? '是' : '否' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-    </div>
+        <section class="card section-card col-12">
+          <div class="section-header">
+            <div>
+              <h2>Target</h2>
+              <p>管理 iSCSI Target、Portal、ACL 与 CHAP 配置，并为 Target 挂载 LUN。</p>
+            </div>
+            <div class="section-actions">
+              <button type="button" @click="openCreateTargetModal" :disabled="busy">新建 Target</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 24%;">Target</th>
+                  <th style="width: 26%;">绑定对象</th>
+                  <th style="width: 24%;">接入状态</th>
+                  <th style="width: 26%;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="targets.length === 0">
+                  <td colspan="4" class="section-empty">暂无 Target</td>
+                </tr>
+                <tr v-for="target in targets" :key="target.iqn">
+                  <td>
+                    <div class="cell-stack">
+                      <div class="row-title truncate" :title="target.iqn">{{ shortIqnName(target.iqn) }}</div>
+                      <div class="row-subtitle truncate mono" :title="target.iqn">{{ target.iqn }}</div>
+                      <div class="cell-line">TPG {{ target.settings ? parseTpgValue(target.settings.tpg) : 1 }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="cell-line truncate" :title="formatDatasetNames(target.zvol_names)">{{ formatDatasetNames(target.zvol_names) }}</div>
+                      <div class="cell-line truncate mono" :title="formatBackstoreNames(target.backstores)">{{ formatBackstoreNames(target.backstores) }}</div>
+                      <div class="cell-line truncate" :title="formatTargetLuns(target)">{{ formatTargetLuns(target) }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="status-group">
+                        <span class="badge" :class="target.settings && target.settings.authentication ? 'badge-success' : 'badge-neutral'">{{ target.settings && target.settings.authentication ? 'CHAP 已启用' : '未启用 CHAP' }}</span>
+                        <span class="badge" :class="target.portals && target.portals.length ? 'badge-success' : 'badge-neutral'">{{ target.portals && target.portals.length ? `${target.portals.length} Portal` : '无 Portal' }}</span>
+                      </div>
+                      <div class="cell-line truncate" :title="formatPortals(target.portals)">{{ formatPortals(target.portals) }}</div>
+                      <div class="cell-line truncate" :title="formatAclNames(target.acl_names)">{{ formatAclNames(target.acl_names) }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="inline-actions">
+                      <button type="button" class="secondary ghost" @click="openTargetConfigModal(target)" :disabled="busy">配置 Target</button>
+                      <button
+                        type="button"
+                        class="secondary ghost"
+                        @click="openCreateLunModal({ iqn: target.iqn, tpg: target.settings ? parseTpgValue(target.settings.tpg) : 1 })"
+                        :disabled="busy || !availableLunBackstores.length"
+                      >
+                        添加 LUN
+                      </button>
+                      <button type="button" class="danger ghost" @click="deleteTarget(target.iqn, false)" :disabled="busy">删除</button>
+                      <button type="button" class="danger ghost" @click="deleteTarget(target.iqn, true)" :disabled="busy">删 Target+Backstore</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card section-card col-12">
+          <div class="section-header">
+            <div>
+              <h2>Backstore</h2>
+              <p>查看和维护 LIO Backstore，确认来源卷、启用状态与占用情况。</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 28%;">Backstore</th>
+                  <th style="width: 28%;">来源</th>
+                  <th style="width: 20%;">状态</th>
+                  <th style="width: 24%;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="backstores.length === 0">
+                  <td colspan="4" class="section-empty">暂无 Backstore</td>
+                </tr>
+                <tr v-for="item in backstores" :key="item.name">
+                  <td>
+                    <div class="cell-stack">
+                      <div class="row-title truncate" :title="item.name">{{ displayBackstoreTitle(item) }}</div>
+                      <div class="row-subtitle truncate mono" :title="item.name">{{ item.name }}</div>
+                      <div class="cell-line truncate">iblock 组 {{ item.iblock_group || '-' }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="cell-line truncate" :title="item.zvol_name || '-'">{{ item.zvol_name ? `ZVOL ${item.zvol_name}` : '未找到来源卷' }}</div>
+                      <div class="cell-line truncate mono" :title="item.device || '-'">{{ compactDevicePath(item.device) }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="cell-stack">
+                      <div class="status-group">
+                        <span class="badge" :class="item.enabled ? 'badge-success' : 'badge-warn'">{{ item.enabled ? '已启用' : '未启用' }}</span>
+                        <span class="badge" :class="item.in_use ? 'badge-success' : 'badge-neutral'">{{ item.in_use ? 'Target 已使用' : '未被使用' }}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="inline-actions">
+                      <button
+                        type="button"
+                        class="secondary ghost"
+                        @click="openCreateLunModal({ backstoreName: item.name })"
+                        :disabled="busy || item.in_use || !targets.length"
+                      >
+                        挂载 LUN
+                      </button>
+                      <button
+                        type="button"
+                        class="danger ghost"
+                        @click="deleteBackstore(item.name)"
+                        :disabled="busy || item.in_use"
+                      >
+                        删除 Backstore
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card section-card col-12">
+          <div class="section-header">
+            <div>
+              <h2>日志</h2>
+              <p>记录接口调用、命令执行和后台任务结果，可按等级查看最近操作。</p>
+            </div>
+            <div class="section-actions">
+              <button type="button" class="secondary" @click="loadLogs" :disabled="busy">刷新日志</button>
+            </div>
+          </div>
+          <div class="filters-row">
+            <div class="field">
+              <label>日志等级</label>
+              <select v-model="logFilter.level" title="选择日志等级" @change="loadLogs">
+                <option value="">全部</option>
+                <option value="debug">debug</option>
+                <option value="info">info</option>
+                <option value="warning">warning</option>
+                <option value="error">error</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>显示数量</label>
+              <select v-model.number="logFilter.limit" title="选择日志数量" @change="loadLogs">
+                <option :value="100">100</option>
+                <option :value="200">200</option>
+                <option :value="500">500</option>
+              </select>
+            </div>
+            <div class="status-group">
+              <span class="badge badge-neutral">debug {{ logCounts.debug || 0 }}</span>
+              <span class="badge badge-success">info {{ logCounts.info || 0 }}</span>
+              <span class="badge badge-warn">warning {{ logCounts.warning || 0 }}</span>
+              <span class="badge" :class="(logCounts.error || 0) ? 'badge-warn' : 'badge-neutral'">error {{ logCounts.error || 0 }}</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 18%;">时间</th>
+                  <th style="width: 12%;">等级</th>
+                  <th style="width: 14%;">类型</th>
+                  <th style="width: 56%;">内容</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="logs.length === 0">
+                  <td colspan="4" class="section-empty">暂无日志</td>
+                </tr>
+                <tr v-for="item in logs" :key="item.id">
+                  <td>{{ formatTimestamp(item.timestamp) }}</td>
+                  <td>
+                    <span class="badge" :class="logLevelClass(item.level)">{{ item.level }}</span>
+                  </td>
+                  <td>{{ item.category || '-' }}</td>
+                  <td>
+                    <div class="log-entry">
+                      <div class="log-message">{{ item.message }}</div>
+                      <pre v-if="item.details && Object.keys(item.details).length" class="log-details">{{ formatLogDetails(item.details) }}</pre>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
 
     <div v-if="activeModal" class="modal-backdrop" @click.self="closeModal">
-      <div class="modal-panel" :class="{ 'modal-panel-wide': activeModal === 'target-config' }">
+      <div class="modal-panel" :class="{ 'modal-panel-wide': activeModal === 'target-config' || activeModal === 'snapshot' }">
         <div class="modal-header">
           <div>
             <h2>{{ modalTitle }}</h2>
-            <div v-if="activeModal === 'target-config'" class="small">当前 Target：{{ selectedTarget ? selectedTarget.iqn : '未选择' }}</div>
+            <div v-if="activeModal === 'target-config'" class="small">当前 Target：{{ selectedTarget ? `${shortIqnName(selectedTarget.iqn)} · ${selectedTarget.iqn}` : '未选择' }}</div>
           </div>
           <button type="button" class="secondary" @click="closeModal" :disabled="busy">关闭</button>
         </div>
@@ -527,22 +1003,243 @@
             <input type="checkbox" v-model="zvolForm.sparse">
             稀疏 ZVOL
           </label>
-          <div class="hint">创建时会自动确保 `pool/parent_dataset` 存在，并使用 `mountpoint=none`。默认按厚置备思路保留 `sparse=off`。</div>
+          <div class="hint">创建卷。目标路径为 `pool/parent_dataset/name`。</div>
           <div class="inline-actions mt14">
             <button type="button" @click="createZvol" :disabled="busy || !zvolForm.pool || !zvolForm.name || !zvolForm.size">创建 ZVOL</button>
+          </div>
+        </template>
+
+        <template v-else-if="activeModal === 'snapshot'">
+          <div class="grid modal-grid">
+            <section class="card section-card col-7">
+              <div class="field">
+                <label>ZVOL</label>
+                <input :value="snapshotForm.zvol_name ? `${shortDatasetName(snapshotForm.zvol_name)} · ${snapshotForm.zvol_name}` : ''" readonly>
+              </div>
+              <div class="field">
+                <label>快照名称</label>
+                <input v-model="snapshotForm.snapshot_name" placeholder="例如 before-upgrade">
+              </div>
+              <div class="hint">创建快照前建议先暂停应用写入；如需成组一致性快照，请在后端环境使用 `zfs snapshot -r` 并确认业务写入已同步落盘。</div>
+              <div class="inline-actions mt14">
+                <button type="button" @click="createSnapshot" :disabled="busy || !snapshotForm.zvol_name || !snapshotForm.snapshot_name">创建快照</button>
+              </div>
+
+              <div v-if="activeSnapshotZvol && activeSnapshotZvol.is_clone" class="field mt14">
+                <label>反向同步基线</label>
+                <select v-model="reverseSyncForm.base_snapshot" title="选择 clone 反向同步的增量基线">
+                  <option value="">默认使用 origin 基线</option>
+                  <option v-for="snapshot in reverseSyncBaseOptions" :key="snapshot.name" :value="snapshot.name">{{ snapshot.short_name }} · {{ snapshot.name }}</option>
+                </select>
+                <div class="small mt8">当前 clone origin：{{ activeSnapshotZvol.origin || '-' }}</div>
+                <div class="small">目标 ZVOL：{{ formatSnapshotTarget(activeSnapshotZvol.origin) }}</div>
+              </div>
+
+              <div v-if="activeOriginCloneTargets.length" class="field mt14">
+                <label>同步到 Clone</label>
+                <select v-model="originSyncForm.source_snapshot" title="选择要推送到 clone 的源快照">
+                  <option value="">请选择源快照</option>
+                  <option v-for="snapshot in activeSnapshots" :key="snapshot.name" :value="snapshot.name">{{ snapshot.short_name }} · {{ snapshot.name }}</option>
+                </select>
+                <div class="hint">会对每个 clone 使用自己的 origin 作为增量基线，再把该源快照的变更同步过去。</div>
+                <div class="field mt14">
+                  <label>同步目标 Clone</label>
+                  <div class="cell-stack">
+                    <label v-for="item in activeOriginCloneTargets" :key="item.name" class="checkbox">
+                      <input type="checkbox" v-model="originCloneSelection[item.name]">
+                      {{ shortDatasetName(item.name) }} · {{ item.name }}
+                    </label>
+                  </div>
+                </div>
+                <div class="inline-actions mt14">
+                  <button type="button" class="secondary" @click="syncOriginSnapshotToClones" :disabled="busy || !originSyncForm.source_snapshot || !selectedOriginCloneNames.length">推送到选中 Clone</button>
+                </div>
+              </div>
+
+              <div class="field mt14">
+                <label>已有快照</label>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width: 28%;">快照</th>
+                      <th style="width: 16%;">used</th>
+                      <th style="width: 16%;">referenced</th>
+                      <th style="width: 20%;">依赖 clone</th>
+                      <th style="width: 20%;">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="activeSnapshots.length === 0">
+                      <td colspan="5" class="section-empty">暂无快照</td>
+                    </tr>
+                    <tr v-for="snapshot in activeSnapshots" :key="snapshot.name">
+                      <td>
+                        <div class="cell-stack">
+                          <div class="row-title truncate" :title="snapshot.short_name">{{ snapshot.short_name }}</div>
+                          <div class="row-subtitle truncate mono" :title="snapshot.name">{{ snapshot.name }}</div>
+                        </div>
+                      </td>
+                      <td>{{ snapshot.used || '-' }}</td>
+                      <td>{{ snapshot.refer || '-' }}</td>
+                      <td>
+                        <div class="cell-stack">
+                          <div class="cell-line truncate" :title="formatDatasetNames(snapshot.dependent_clones)">{{ formatDatasetNames(snapshot.dependent_clones) }}</div>
+                          <div v-if="snapshot.dependent_clones && snapshot.dependent_clones.length" class="small">删除时会先 promote clone</div>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="inline-actions">
+                          <button type="button" class="secondary ghost" @click="rollbackSnapshot(snapshot)" :disabled="busy">回滚</button>
+                          <button
+                            v-if="activeSnapshotZvol && activeSnapshotZvol.is_clone"
+                            type="button"
+                            class="secondary ghost"
+                            @click="reverseSyncSnapshot(snapshot)"
+                            :disabled="busy"
+                          >
+                            反向同步
+                          </button>
+                          <button
+                            v-else-if="activeOriginCloneTargets.length"
+                            type="button"
+                            class="secondary ghost"
+                            @click="syncOriginSnapshotToClones(snapshot)"
+                            :disabled="busy"
+                          >
+                            推送到 Clone
+                          </button>
+                          <button type="button" class="danger ghost" @click="deleteSnapshot(snapshot)" :disabled="busy">删除</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="card section-card col-5">
+              <div class="section-header">
+                <div>
+                  <h2>定时快照</h2>
+                  <p>按固定周期执行快照，并按保留数量自动清理旧快照。</p>
+                </div>
+              </div>
+              <div class="field">
+                <label>快照前缀</label>
+                <input v-model="snapshotScheduleForm.prefix" placeholder="例如 auto">
+              </div>
+              <div class="field">
+                <label>周期（分钟）</label>
+                <input v-model.number="snapshotScheduleForm.interval_minutes" placeholder="例如 60">
+              </div>
+              <div class="field">
+                <label>保留数量</label>
+                <input v-model.number="snapshotScheduleForm.keep_count" placeholder="例如 7">
+              </div>
+              <label class="checkbox">
+                <input type="checkbox" v-model="snapshotScheduleForm.enabled">
+                创建后立即启用
+              </label>
+              <div class="hint">定时清理默认不会自动 promote 仍被 clone 依赖的旧快照；这类快照会跳过并记录在任务状态里。</div>
+              <div class="inline-actions mt14">
+                <button type="button" @click="createSnapshotSchedule" :disabled="busy || !snapshotScheduleForm.zvol_name || !snapshotScheduleForm.prefix || !snapshotScheduleForm.interval_minutes || !snapshotScheduleForm.keep_count">新增计划</button>
+              </div>
+
+              <div class="field mt14">
+                <label>当前 ZVOL 的计划</label>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width: 22%;">前缀</th>
+                      <th style="width: 18%;">周期</th>
+                      <th style="width: 18%;">保留</th>
+                      <th style="width: 24%;">状态</th>
+                      <th style="width: 18%;">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="activeSnapshotSchedules.length === 0">
+                      <td colspan="5" class="section-empty">暂无定时任务</td>
+                    </tr>
+                    <tr v-for="job in activeSnapshotSchedules" :key="job.id">
+                      <td>
+                        <div class="cell-stack">
+                          <div class="row-title truncate" :title="job.prefix">{{ job.prefix }}</div>
+                          <div class="small">下次 {{ formatTimestamp(job.next_run_at) }}</div>
+                        </div>
+                      </td>
+                      <td>{{ job.interval_minutes }} 分钟</td>
+                      <td>{{ job.keep_count }} 个</td>
+                      <td>
+                        <div class="cell-stack">
+                          <div class="cell-line">{{ job.enabled ? '已启用' : '已停用' }}</div>
+                          <div class="small">上次 {{ formatTimestamp(job.last_run_at) }}</div>
+                          <div class="small truncate" :title="job.last_snapshot_name || '-'">最近快照 {{ job.last_snapshot_name || '-' }}</div>
+                          <div v-if="job.last_error" class="small truncate" :title="job.last_error">错误 {{ job.last_error }}</div>
+                          <div v-else-if="job.last_skipped_snapshots && job.last_skipped_snapshots.length" class="small truncate" :title="job.last_skipped_snapshots.join(', ')">跳过 {{ job.last_skipped_snapshots.length }} 个依赖快照</div>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="inline-actions">
+                          <button type="button" class="secondary ghost" @click="toggleSnapshotSchedule(job)" :disabled="busy">{{ job.enabled ? '停用' : '启用' }}</button>
+                          <button type="button" class="danger ghost" @click="deleteSnapshotSchedule(job)" :disabled="busy">删除</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </template>
+
+        <template v-else-if="activeModal === 'clone'">
+          <div class="field">
+            <label>源 ZVOL</label>
+            <input :value="cloneForm.zvol_name ? `${shortDatasetName(cloneForm.zvol_name)} · ${cloneForm.zvol_name}` : ''" readonly>
+          </div>
+          <div class="field">
+            <label>源快照</label>
+            <select v-model="cloneForm.snapshot_name" title="选择快照">
+              <option value="">请选择快照</option>
+              <option v-for="snapshot in cloneSourceSnapshots" :key="snapshot.name" :value="snapshot.name">{{ snapshot.short_name }} · {{ snapshot.name }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>目标存储池</label>
+            <select v-model="cloneForm.pool" title="选择存储池">
+              <option value="">请选择存储池</option>
+              <option v-for="pool in pools" :key="pool.name" :value="pool.name">{{ pool.name }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>目标父数据集</label>
+            <input v-model="cloneForm.parent_dataset" placeholder="默认 iscsi">
+          </div>
+          <div class="field">
+            <label>克隆名称</label>
+            <input v-model="cloneForm.name" placeholder="例如 games-clone">
+          </div>
+          <div class="hint">从选中的快照创建新的 ZVOL 克隆。clone 依赖 origin 快照；如果后续要删除该 origin，系统会先对依赖 clone 执行 `zfs promote`。</div>
+          <div class="inline-actions mt14">
+            <button type="button" @click="createClone" :disabled="busy || !cloneForm.snapshot_name || !cloneForm.pool || !cloneForm.name">创建克隆</button>
           </div>
         </template>
 
         <template v-else-if="activeModal === 'backstore'">
           <div class="field">
             <label>ZVOL</label>
-            <input v-model="backstoreForm.zvol_name" readonly>
+            <input :value="backstoreForm.zvol_name ? `${shortDatasetName(backstoreForm.zvol_name)} · ${backstoreForm.zvol_name}` : ''" readonly>
           </div>
           <div class="field">
             <label>Backstore 名称</label>
             <input v-model="backstoreForm.backstore_name" placeholder="留空则按默认命名">
           </div>
-          <div class="hint">未填写名称时，后端会按 `pool_dataset_name` 形式自动生成。</div>
+          <div class="hint">为当前 ZVOL 创建 LIO block backstore。</div>
           <div class="inline-actions mt14">
             <button type="button" @click="createBackstore" :disabled="busy || !backstoreForm.zvol_name">创建 Backstore</button>
           </div>
@@ -557,7 +1254,7 @@
             <label>TPG</label>
             <input v-model.number="targetForm.tpg" placeholder="默认 1">
           </div>
-          <div class="hint">这里只创建 Target 本身，不顺带挂 LUN。Target 建好后，请在 LUN 弹窗里选择已有 Backstore 挂载。</div>
+          <div class="hint">创建 Target 本体。LUN 在 Target 建好后单独挂载。</div>
           <div class="inline-actions mt14">
             <button type="button" @click="createTarget" :disabled="busy || !targetForm.iqn">创建 Target</button>
           </div>
@@ -568,21 +1265,21 @@
             <label>Target</label>
             <select v-model="lunForm.iqn" title="选择要挂载 LUN 的 Target">
               <option value="">请选择 Target</option>
-              <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ target.iqn }}</option>
+              <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ shortIqnName(target.iqn) }} · {{ target.iqn }}</option>
             </select>
           </div>
           <div class="field">
             <label>Backstore</label>
             <select v-model="lunForm.backstore_name" title="选择已有 Backstore">
               <option value="">请选择 Backstore</option>
-              <option v-for="item in availableLunBackstores" :key="item.name" :value="item.name">{{ item.name }} ({{ item.zvol_name || '-' }})</option>
+              <option v-for="item in availableLunBackstores" :key="item.name" :value="item.name">{{ displayBackstoreTitle(item) }} · {{ item.name }}</option>
             </select>
           </div>
           <div class="field">
             <label>TPG</label>
             <input v-model.number="lunForm.tpg" placeholder="默认 1">
           </div>
-          <div class="hint">这里只展示当前未被 Target 使用的 Backstore，避免重复挂载。</div>
+          <div class="hint">把一个空闲 Backstore 挂到指定 Target。</div>
           <div class="inline-actions mt14">
             <button type="button" @click="createLun" :disabled="busy || !lunForm.iqn || !lunForm.backstore_name">创建 LUN</button>
           </div>
@@ -596,7 +1293,7 @@
                 <label>目标 IQN</label>
                 <select v-model="selectedTargetIqn" title="选择要配置的 Target">
                   <option value="">请选择 Target</option>
-                  <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ target.iqn }}</option>
+                  <option v-for="target in targets" :key="target.iqn" :value="target.iqn">{{ shortIqnName(target.iqn) }} · {{ target.iqn }}</option>
                 </select>
               </div>
               <div class="field">
@@ -628,7 +1325,7 @@
                 <input v-model="targetSettingsForm.mutual_password" placeholder="可选">
               </div>
               <div class="hint">
-                <div>当前 target：{{ selectedTarget ? selectedTarget.iqn : '未选择' }}</div>
+                <div>当前 target：{{ selectedTarget ? `${shortIqnName(selectedTarget.iqn)} · ${selectedTarget.iqn}` : '未选择' }}</div>
                 <div v-if="selectedTarget && selectedTarget.settings">{{ selectedTarget.settings.mcs_hint }}</div>
                 <div>如果你要精确限制 initiator，一般保持 `generate_node_acls=0`，再到 ACL 区给每个 initiator 单独写 CHAP。</div>
               </div>
@@ -760,6 +1457,13 @@
           health: {},
           pools: [],
           zvols: [],
+          snapshotJobs: [],
+          logs: [],
+          logCounts: { debug: 0, info: 0, warning: 0, error: 0 },
+          logFilter: {
+            level: "",
+            limit: 200
+          },
           backstores: [],
           targets: [],
           activeModal: "",
@@ -787,6 +1491,31 @@
           backstoreForm: {
             zvol_name: "",
             backstore_name: ""
+          },
+          snapshotForm: {
+            zvol_name: "",
+            snapshot_name: ""
+          },
+          reverseSyncForm: {
+            base_snapshot: ""
+          },
+          originSyncForm: {
+            source_snapshot: ""
+          },
+          originCloneSelection: {},
+          snapshotScheduleForm: {
+            zvol_name: "",
+            prefix: "auto",
+            interval_minutes: 60,
+            keep_count: 7,
+            enabled: true
+          },
+          cloneForm: {
+            zvol_name: "",
+            snapshot_name: "",
+            pool: "",
+            parent_dataset: "iscsi",
+            name: ""
           },
           targetForm: {
             iqn: "",
@@ -826,14 +1555,50 @@
         };
       },
       computed: {
+        baseZvols() {
+          return this.zvols.filter((item) => !item.is_clone);
+        },
+        cloneZvols() {
+          return this.zvols.filter((item) => item.is_clone);
+        },
         selectedTarget() {
           return this.targets.find((item) => item.iqn === this.selectedTargetIqn) || null;
         },
         availableLunBackstores() {
           return this.backstores.filter((item) => !item.in_use);
         },
+        activeSnapshots() {
+          const source = this.zvols.find((item) => item.name === this.snapshotForm.zvol_name);
+          return source && source.snapshots ? source.snapshots : [];
+        },
+        activeSnapshotZvol() {
+          return this.zvols.find((item) => item.name === this.snapshotForm.zvol_name) || null;
+        },
+        reverseSyncBaseOptions() {
+          if (!this.activeSnapshotZvol || !this.activeSnapshotZvol.is_clone || !this.activeSnapshotZvol.origin_dataset) return [];
+          const originZvol = this.zvols.find((item) => item.name === this.activeSnapshotZvol.origin_dataset);
+          return originZvol && originZvol.snapshots ? originZvol.snapshots : [];
+        },
+        activeOriginCloneTargets() {
+          if (!this.activeSnapshotZvol || this.activeSnapshotZvol.is_clone) return [];
+          return this.cloneZvols.filter((item) => item.origin_dataset === this.activeSnapshotZvol.name);
+        },
+        selectedOriginCloneNames() {
+          return this.activeOriginCloneTargets
+            .filter((item) => !!this.originCloneSelection[item.name])
+            .map((item) => item.name);
+        },
+        activeSnapshotSchedules() {
+          return this.snapshotJobs.filter((item) => item.zvol_name === this.snapshotForm.zvol_name);
+        },
+        cloneSourceSnapshots() {
+          const source = this.zvols.find((item) => item.name === this.cloneForm.zvol_name);
+          return source && source.snapshots ? source.snapshots : [];
+        },
         modalTitle() {
           if (this.activeModal === "zvol") return "创建 ZVOL";
+          if (this.activeModal === "snapshot") return "快照管理";
+          if (this.activeModal === "clone") return "创建克隆";
           if (this.activeModal === "backstore") return "创建 Backstore";
           if (this.activeModal === "target") return "创建 iSCSI Target";
           if (this.activeModal === "lun") return "创建 LUN";
@@ -888,20 +1653,131 @@
         parseTpgValue(value) {
           return Number.parseInt(String(value || "1").replace(/\D/g, ""), 10) || 1;
         },
+        shortDatasetName(value) {
+          const text = String(value || "").trim();
+          if (!text) return "-";
+          const parts = text.split("/").filter(Boolean);
+          return parts.length ? parts[parts.length - 1] : text;
+        },
+        shortIqnName(value) {
+          const text = String(value || "").trim();
+          if (!text) return "-";
+          if (text.includes(":")) return text.split(":").pop() || text;
+          return text;
+        },
+        shortSnapshotName(value) {
+          const text = String(value || "").trim();
+          if (!text) return "-";
+          if (text.includes("@")) return text.split("@").pop() || text;
+          return text;
+        },
+        splitDatasetPath(value) {
+          const parts = String(value || "").trim().split("/").filter(Boolean);
+          if (parts.length < 2) {
+            return { pool: "", parent_dataset: "iscsi", name: String(value || "").trim() };
+          }
+          return {
+            pool: parts[0],
+            parent_dataset: parts.slice(1, -1).join("/") || "iscsi",
+            name: parts[parts.length - 1]
+          };
+        },
+        compactDevicePath(value) {
+          const text = String(value || "").trim();
+          if (!text) return "-";
+          if (!text.startsWith("/dev/zvol/")) return text;
+          return `/dev/zvol/.../${this.shortDatasetName(text)}`;
+        },
+        findBackstore(name) {
+          return this.backstores.find((item) => item.name === name) || null;
+        },
+        displayBackstoreTitle(item) {
+          if (item && item.zvol_name) return this.shortDatasetName(item.zvol_name);
+          return item && item.name ? item.name : "-";
+        },
+        formatTargetNames(values) {
+          if (!values || !values.length) return "未导出";
+          return values.map((item) => this.shortIqnName(item)).join(", ");
+        },
+        formatDatasetNames(values) {
+          if (!values || !values.length) return "未绑定 ZVOL";
+          return values.map((item) => this.shortDatasetName(item)).join(", ");
+        },
+        formatBackstoreNames(values) {
+          if (!values || !values.length) return "未挂载 Backstore";
+          return values.map((item) => {
+            const backstore = this.findBackstore(item);
+            return backstore ? this.displayBackstoreTitle(backstore) : item;
+          }).join(", ");
+        },
+        formatPortals(values) {
+          if (!values || !values.length) return "未配置 Portal";
+          return values.join(", ");
+        },
+        formatAclNames(values) {
+          if (!values || !values.length) return "未配置 ACL";
+          return values.join(", ");
+        },
+        formatOriginChain(values) {
+          if (!values || !values.length) return "-";
+          return values.map((item) => {
+            const [dataset, snapshot = ""] = String(item).split("@");
+            return `${this.shortDatasetName(dataset)}@${snapshot}`;
+          }).join(" <= ");
+        },
+        formatSnapshotTarget(snapshotName) {
+          const [dataset = ""] = String(snapshotName || "").split("@");
+          return dataset || "-";
+        },
+        formatTimestamp(value) {
+          return value ? value.replace("T", " ") : "-";
+        },
+        logLevelClass(level) {
+          if (level === "info") return "badge-success";
+          if (level === "warning") return "badge-warn";
+          if (level === "error") return "badge-warn";
+          return "badge-neutral";
+        },
+        formatLogDetails(details) {
+          return JSON.stringify(details, null, 2);
+        },
+        notifySnapshotDeleted(snapshotName, promotedClones = []) {
+          if (promotedClones.length) {
+            this.notifyDeleted(`快照已删除，已 promote ${promotedClones.map((item) => this.shortDatasetName(item)).join("、")}`);
+            return;
+          }
+          this.notifyDeleted(`快照 ${this.shortSnapshotName(snapshotName)} 已删除`);
+        },
+        async loadLogs() {
+          try {
+            const result = await this.api(`/api/logs?level=${encodeURIComponent(this.logFilter.level)}&limit=${encodeURIComponent(this.logFilter.limit)}`);
+            this.logs = result.logs || [];
+            this.logCounts = result.counts || this.logCounts;
+          } catch (error) {
+            this.notify(error.message, "error");
+          }
+        },
         async loadAll() {
           try {
             const results = await Promise.allSettled([
               this.api("/api/health"),
               this.api("/api/pools"),
               this.api("/api/zvols"),
+              this.api("/api/snapshot-jobs"),
+              this.api(`/api/logs?level=${encodeURIComponent(this.logFilter.level)}&limit=${encodeURIComponent(this.logFilter.limit)}`),
               this.api("/api/backstores"),
               this.api("/api/iscsi/targets")
             ]);
 
-            const [health, pools, zvols, backstores, targets] = results;
+            const [health, pools, zvols, snapshotJobs, logs, backstores, targets] = results;
             if (health.status === "fulfilled") this.health = health.value;
             if (pools.status === "fulfilled") this.pools = pools.value.pools || [];
             if (zvols.status === "fulfilled") this.zvols = zvols.value.zvols || [];
+            if (snapshotJobs.status === "fulfilled") this.snapshotJobs = snapshotJobs.value.jobs || [];
+            if (logs.status === "fulfilled") {
+              this.logs = logs.value.logs || [];
+              this.logCounts = logs.value.counts || this.logCounts;
+            }
             if (backstores.status === "fulfilled") this.backstores = backstores.value.backstores || [];
             if (targets.status === "fulfilled") this.targets = targets.value.targets || [];
 
@@ -956,7 +1832,42 @@
           }
         },
         openCreateZvolModal() {
+          if (!this.zvolForm.pool && this.pools.length) {
+            this.zvolForm.pool = this.pools[0].name;
+          }
           this.activeModal = "zvol";
+        },
+        openSnapshotModal(zvol) {
+          this.snapshotForm.zvol_name = zvol.name;
+          this.snapshotForm.snapshot_name = "";
+          this.reverseSyncForm.base_snapshot = zvol.is_clone ? (zvol.origin || "") : "";
+          this.originSyncForm.source_snapshot = zvol.snapshots && zvol.snapshots.length ? zvol.snapshots[zvol.snapshots.length - 1].name : "";
+          this.originCloneSelection = Object.fromEntries(
+            this.cloneZvols
+              .filter((item) => item.origin_dataset === zvol.name)
+              .map((item) => [item.name, true])
+          );
+          this.snapshotScheduleForm = {
+            zvol_name: zvol.name,
+            prefix: `${this.shortDatasetName(zvol.name)}-auto`,
+            interval_minutes: 60,
+            keep_count: 7,
+            enabled: true
+          };
+          this.activeModal = "snapshot";
+        },
+        openCloneModal(zvol) {
+          if (!zvol.snapshots || !zvol.snapshots.length) {
+            this.notify("请先为该 ZVOL 创建快照", "error");
+            return;
+          }
+          const parts = this.splitDatasetPath(zvol.name);
+          this.cloneForm.zvol_name = zvol.name;
+          this.cloneForm.snapshot_name = zvol.snapshots[zvol.snapshots.length - 1].name;
+          this.cloneForm.pool = parts.pool || (this.pools[0] ? this.pools[0].name : "");
+          this.cloneForm.parent_dataset = parts.parent_dataset;
+          this.cloneForm.name = `${this.shortDatasetName(zvol.name)}-clone`;
+          this.activeModal = "clone";
         },
         openBackstoreModal(zvolName) {
           this.backstoreForm.zvol_name = zvolName;
@@ -977,6 +1888,9 @@
             this.notify("暂无可用 Backstore，请先创建 Backstore", "error");
             return;
           }
+          this.lunForm.iqn = "";
+          this.lunForm.backstore_name = "";
+          this.lunForm.tpg = 1;
           if (prefill.iqn) this.lunForm.iqn = prefill.iqn;
           if (prefill.backstoreName) this.lunForm.backstore_name = prefill.backstoreName;
           if (prefill.tpg) this.lunForm.tpg = prefill.tpg;
@@ -1032,7 +1946,7 @@
         },
         formatTargetLuns(target) {
           const luns = (target.tpgs || []).flatMap((tpg) =>
-            (tpg.luns || []).map((lun) => `${lun.name}: ${lun.backstores.join(", ") || "-"}`)
+            (tpg.luns || []).map((lun) => `${lun.name}: ${this.formatBackstoreNames(lun.backstores)}`)
           );
           return luns.length ? luns.join(" | ") : "未挂载";
         },
@@ -1065,6 +1979,210 @@
               body: JSON.stringify(payload)
             });
             this.notify("Backstore 创建成功");
+            await this.loadAll();
+            this.closeModal();
+          } catch (error) {
+            this.notify(error.message, "error");
+          } finally {
+            this.busy = false;
+          }
+        },
+        async createSnapshot() {
+          this.busy = true;
+          try {
+            await this.api(`/api/zvols/${encodeURIComponent(this.snapshotForm.zvol_name)}/snapshots`, {
+              method: "POST",
+              body: JSON.stringify({ snapshot_name: this.snapshotForm.snapshot_name })
+            });
+            this.notify("快照创建成功");
+            const createdSnapshotName = `${this.snapshotForm.zvol_name}@${this.snapshotForm.snapshot_name}`;
+            this.snapshotForm.snapshot_name = "";
+            await this.loadAll();
+            if (!this.activeSnapshotZvol || this.activeSnapshotZvol.name !== this.snapshotForm.zvol_name) return;
+            if (!this.activeSnapshotZvol.is_clone) this.originSyncForm.source_snapshot = createdSnapshotName;
+          } catch (error) {
+            this.notify(error.message, "error");
+          } finally {
+            this.busy = false;
+          }
+        },
+        async rollbackSnapshot(snapshot) {
+          this.openConfirmDialog({
+            title: "回滚快照",
+            message: `确认回滚到 ${snapshot.name}？\n\n这会丢弃当前 ZVOL 在该快照之后的写入内容，并且会按 zfs rollback -r 清理更新的快照。回滚前请确认业务已暂停写入。`,
+            confirmLabel: "回滚",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/zvol-snapshots/${encodeURIComponent(snapshot.name)}/rollback`, {
+                  method: "POST"
+                });
+                await this.loadAll();
+                this.notify("快照回滚成功");
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
+        },
+        async reverseSyncSnapshot(snapshot) {
+          const activeClone = this.activeSnapshotZvol;
+          if (!activeClone || !activeClone.is_clone || !activeClone.origin || activeClone.origin === "-") {
+            this.notify("只有 clone ZVOL 的快照才支持增量反向同步", "error");
+            return;
+          }
+          const targetDataset = this.formatSnapshotTarget(activeClone.origin);
+          this.openConfirmDialog({
+            title: "反向同步快照",
+            message: `确认将 ${snapshot.name} 的增量变更反向同步到 ${targetDataset}？\n\n将执行：\nzfs send -i ${this.reverseSyncForm.base_snapshot || activeClone.origin} ${snapshot.name} | zfs recv -F ${targetDataset}\n\n这会覆盖目标 ZVOL 上较新的内容，请先确认目标业务已停止写入。`,
+            confirmLabel: "开始同步",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/zvol-snapshots/${encodeURIComponent(snapshot.name)}/reverse-sync`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    base_snapshot: this.reverseSyncForm.base_snapshot || undefined
+                  })
+                });
+                await this.loadAll();
+                this.notify("增量反向同步成功");
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
+        },
+        async syncOriginSnapshotToClones(snapshot = null) {
+          const sourceSnapshot = snapshot ? snapshot.name : this.originSyncForm.source_snapshot;
+          if (!sourceSnapshot) {
+            this.notify("请先选择源快照", "error");
+            return;
+          }
+          const cloneNames = this.selectedOriginCloneNames;
+          if (!cloneNames.length) {
+            this.notify("请至少选择一个 clone", "error");
+            return;
+          }
+          this.openConfirmDialog({
+            title: "推送到 Clone",
+            message: `确认将 ${sourceSnapshot} 的增量变更推送到 ${cloneNames.map((item) => this.shortDatasetName(item)).join("、")}？\n\n每个 clone 都会使用自己的 origin 快照作为增量基线，并执行 zfs recv -F 覆盖接收。`,
+            confirmLabel: "开始推送",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                const result = await this.api(`/api/zvol-snapshots/${encodeURIComponent(sourceSnapshot)}/sync-to-clones`, {
+                  method: "POST",
+                  body: JSON.stringify({ clone_names: cloneNames })
+                });
+                await this.loadAll();
+                if (result.failures && result.failures.length) {
+                  this.notify(`部分完成：成功 ${result.results.length}，失败 ${result.failures.length}`, "warning");
+                } else {
+                  this.notify(`已推送到 ${result.results.length} 个 clone`);
+                }
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
+        },
+        async createSnapshotSchedule() {
+          this.busy = true;
+          try {
+            await this.api("/api/snapshot-jobs", {
+              method: "POST",
+              body: JSON.stringify(this.snapshotScheduleForm)
+            });
+            this.notify("定时快照任务创建成功");
+            await this.loadAll();
+          } catch (error) {
+            this.notify(error.message, "error");
+          } finally {
+            this.busy = false;
+          }
+        },
+        async toggleSnapshotSchedule(job) {
+          this.busy = true;
+          try {
+            await this.api(`/api/snapshot-jobs/${encodeURIComponent(job.id)}`, {
+              method: "PUT",
+              body: JSON.stringify({
+                zvol_name: job.zvol_name,
+                prefix: job.prefix,
+                interval_minutes: job.interval_minutes,
+                keep_count: job.keep_count,
+                enabled: !job.enabled
+              })
+            });
+            this.notify(job.enabled ? "定时快照已停用" : "定时快照已启用");
+            await this.loadAll();
+          } catch (error) {
+            this.notify(error.message, "error");
+          } finally {
+            this.busy = false;
+          }
+        },
+        async deleteSnapshotSchedule(job) {
+          this.openConfirmDialog({
+            title: "删除定时快照",
+            message: `确认删除定时快照计划 ${job.prefix}？`,
+            confirmLabel: "删除",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                await this.api(`/api/snapshot-jobs/${encodeURIComponent(job.id)}`, {
+                  method: "DELETE"
+                });
+                this.notifyDeleted("定时快照任务已删除");
+                await this.loadAll();
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
+        },
+        async deleteSnapshot(snapshot) {
+          const cloneNames = snapshot.dependent_clones || [];
+          const promoteNotice = cloneNames.length
+            ? `\n\n检测到依赖 clone：${cloneNames.join("、")}。\n删除前会先执行 zfs promote，再删除 origin 快照。`
+            : "";
+          this.openConfirmDialog({
+            title: "删除快照",
+            message: `确认删除快照 ${snapshot.name}？${promoteNotice}`,
+            confirmLabel: "删除",
+            onConfirm: async () => {
+              this.busy = true;
+              try {
+                const result = await this.api(`/api/zvol-snapshots/${encodeURIComponent(snapshot.name)}`, {
+                  method: "DELETE"
+                });
+                await this.loadAll();
+                this.notifySnapshotDeleted(snapshot.name, result.promoted_clones || []);
+              } catch (error) {
+                this.notify(error.message, "error");
+              } finally {
+                this.busy = false;
+              }
+            }
+          });
+        },
+        async createClone() {
+          this.busy = true;
+          try {
+            await this.api("/api/zvols/clones", {
+              method: "POST",
+              body: JSON.stringify(this.cloneForm)
+            });
+            this.notify("克隆创建成功");
             await this.loadAll();
             this.closeModal();
           } catch (error) {
